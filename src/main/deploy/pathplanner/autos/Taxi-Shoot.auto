@@ -11,27 +11,15 @@
           }
         },
         {
-          "type": "wait",
-          "data": {
-            "waitTime": 1.0
-          }
-        },
-        {
           "type": "path",
           "data": {
-            "pathName": "Basic Shoot from infront target"
+            "pathName": "Taxi-Shoot"
           }
         },
         {
           "type": "named",
           "data": {
             "name": "autoShoot"
-          }
-        },
-        {
-          "type": "wait",
-          "data": {
-            "waitTime": 1.5
           }
         },
         {

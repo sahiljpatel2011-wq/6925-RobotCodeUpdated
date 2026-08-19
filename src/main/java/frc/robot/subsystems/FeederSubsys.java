@@ -25,6 +25,10 @@ public class FeederSubsys extends SubsystemBase {
     fuelFeed.set(speed.fuelFeedValue);
   }
 
+  public boolean isFeeding() {
+    return feeder0.get() != 0.0 || fuelFeed.get() != 0.0;
+  }
+
   public Command setSpeedCommand(FeederSpeed speed) {
     return Commands.runOnce(() -> setSpeed(speed), this);
   }

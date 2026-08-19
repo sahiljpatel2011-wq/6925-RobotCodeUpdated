@@ -36,22 +36,9 @@
           }
         },
         {
-          "type": "deadline",
+          "type": "named",
           "data": {
-            "commands": [
-              {
-                "type": "named",
-                "data": {
-                  "name": "autoShoot"
-                }
-              },
-              {
-                "type": "named",
-                "data": {
-                  "name": "AdjustedWindUpOnce"
-                }
-              }
-            ]
+            "name": "autoShoot"
           }
         },
         {
@@ -79,22 +66,9 @@
           }
         },
         {
-          "type": "parallel",
+          "type": "named",
           "data": {
-            "commands": [
-              {
-                "type": "named",
-                "data": {
-                  "name": "AdjustedWindUpOnce"
-                }
-              },
-              {
-                "type": "named",
-                "data": {
-                  "name": "shoot"
-                }
-              }
-            ]
+            "name": "autoShoot"
           }
         }
       ]

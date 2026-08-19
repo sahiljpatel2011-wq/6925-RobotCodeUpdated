@@ -57,9 +57,12 @@ public final class Constants {
     public static final double kRPMAt165in = 3650;
     public static final double kHoodAt165in = 0.48;
 
+    public static final double kIdleRPM = 3000;
+
     // Limelight aim PD gains (radians/sec per degree of tx error / change)
     public static final double kAimP = 0.15;
     public static final double kAimD = 0.01;
+    public static final double kAimOffsetDegrees = 0.0;
 
     // How far ahead (seconds) to predict robot position for shot calculations
     public static final double kLookAheadSeconds = 0.25;

@@ -77,8 +77,8 @@ public class IntakeSubsys extends SubsystemBase {
       },
       () -> {
         intake.set(0);
-        // Return to deployed position
-        intakeRotator.setControl(rotatorOscillateRequest.withPosition(state[1]));
+        rotatorTargetPosition = state[1];
+        intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
         state[0] = 0;
       }
     );
@@ -104,7 +104,8 @@ public class IntakeSubsys extends SubsystemBase {
       },
       () -> {
         intake.set(0);
-        intakeRotator.setControl(rotatorOscillateRequest.withPosition(state[1]));
+        rotatorTargetPosition = state[1];
+        intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
         state[0] = 0;
       }
     );
@@ -129,7 +130,8 @@ public class IntakeSubsys extends SubsystemBase {
       },
       () -> {
         intake.set(0);
-        intakeRotator.setControl(rotatorPositionRequest.withPosition(state[1]));
+        rotatorTargetPosition = state[1];
+        intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
         state[0] = 0;
       }
     );
@@ -156,7 +158,8 @@ public class IntakeSubsys extends SubsystemBase {
       .withTimeout(totalTime)
       .finallyDo(() -> {
         intake.set(0);
-        intakeRotator.setControl(rotatorOscillateRequest.withPosition(state[1]));
+        rotatorTargetPosition = state[1];
+        intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
         state[0] = 0;
       });
   }

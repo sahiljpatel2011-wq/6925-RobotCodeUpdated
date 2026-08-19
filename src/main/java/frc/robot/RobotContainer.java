@@ -9,106 +9,63 @@ package frc.robot;
  *                     FRC TEAM 6925 - ROBOT OVERVIEW
  * =========================================================================
  *
+ * This is a WCP CC baseplate clone on SDS MK4i, scoring FUEL by shooting
+ * with three independent Kraken flywheels. It is not a dump-bin robot and
+ * does not climb. Too tall for the trench — use bump ramps.
+ *
  * DRIVETRAIN (CommandSwerveDrivetrain)
- *   - Swerve drive using CTRE TunerX-generated constants
- *   - Field-centric control via Xbox controller (port 0)
- *   - Left trigger toggles half-speed mode (0.5x multiplier)
- *   - Left bumper reseeds field-centric heading (gyro reset)
- *   - Right bumper = auto-aim at target + distance-based shooter wind-up
+ *   - Phoenix 6 Tuner X MK4i, field-centric open-loop voltage
+ *   - Xbox port 0: left stick translate (squared + slew), right stick rotate (^1.5)
+ *   - Default speed 0.75; B toggles 1.0; right trigger toggles 1/5
+ *   - Left bumper reseeds field-centric heading
+ *   - Left trigger points wheels to 0° for 0.5 s
+ *   - A = X-brake
+ *   - Right bumper = hub aim + live-table shooter wind-up (keep translating)
+ *   - Y = full-field pass aim (trench tags, 15° inward) + 5450 RPM
+ *   - Drive supply 35 A — do not raise. SysId is disabled/test only.
  *
- * SHOOTER (ShooterSubsys) — 3 TalonFX motors
- *   - CAN 8  = leader motor (inverted — Clockwise_Positive)
- *   - CAN 9  = follower (opposed to leader)
- *   - CAN 10 = follower (opposed to leader)
- *   - Uses VelocityVoltage PID control (kP=0.5, kI=2.0, kV=0.12)
- *   - Current limits: 120A stator / 70A supply
- *   - Neutral mode: Coast (flywheel spins down naturally)
- *   - Default RPM: 3350 for fixed shots
- *   - Distance-adjusted RPM uses interpolation table in RobotCommands:
- *       47"   → 3350 RPM,  hood 0.1
- *       84"   → 3350 RPM,  hood 0.37
- *       120"  → 3350 RPM,  hood 0.45
- *       165"  → 3650 RPM,  hood 0.48  (WCP CC extended range)
- *   - "Shooter At Speed" = within 100 RPM of target
+ * SHOOTER (ShooterSubsys) — 3 independent TalonFX, not followers
+ *   - CAN 8 / 9 / 10, VelocityVoltage, Coast
+ *   - Idle hold 3000 RPM between volleys; last shot RPM is held while feeding
+ *   - Live table (Constants + 150 RPM): 47"→3500/0.00 … 110"→3650/0.50
+ *   - "Shooter At Speed" = all three columns within 300 RPM, false at idle
  *
- * HOOD (HoodSubsys) — 2 servos
- *   - PWM 0 = left servo,  PWM 1 = right servo
- *   - Position range: 0.01 (low) to 0.77 (high)
- *   - Adjusts shot angle; paired with shooter RPM via distance table
+ * HOOD (HoodSubsys) — PWM 0 left, PWM 1 right, 0.01–0.77
  *
- * FEEDER (FeederSubsys) — 2 TalonFX motors
- *   - CAN 51 = main feeder motor (feeds balls into shooter)
- *   - CAN 11 = fuel feed motor (on the shooter, pushes balls to flywheels)
- *   - Both controlled together via FeederSpeed enum:
- *       OFF        → 0.0  / 0.0
- *       FEED_SLOW  → -0.3 / 0.1
- *       FEED_FAST  → -0.5 / 0.5
- *       REVERSE    → 0.3  / -0.1
- *   - Current limits: 50A stator / 40A supply (both motors)
- *   - Neutral mode: Coast
- *   - IMPORTANT: Feeder is a SEPARATE subsystem from shooter so both
- *     can run simultaneously (button 1 = feed, button 2 = flywheels)
+ * FEEDER (FeederSubsys) — CAN 51 feeder + CAN 11 fuel
+ *   - Separate subsystem so button 1 can feed while bumper holds flywheels
  *
- * INTAKE (IntakeSubsys) — 2 TalonFX motors
- *   - CAN 45 = intake roller (picks up balls from ground)
- *   - CAN 50 = intake rotator (pivots intake arm up/down)
- *   - Roller and rotator are controlled INDEPENDENTLY:
- *       Button 11 = intake with oscillate (fast)
- *       Button 12 = retract with oscillate (fast)
- *       Rotator uses PositionVoltage PID (kP=10) for angle control
- *   - Roller: 60A/60A, Coast mode
- *   - Rotator: 60A/60A, Brake mode (holds position when idle)
- *   - IntakeSpeed values are NEGATIVE (motor spins inward to grab balls)
+ * INTAKE (IntakeSubsys) — CAN 45 roller, CAN 50 rotator
+ *   - Button 2 intake+oscillate; 12 retract+oscillate; 6 deploy; 4 retract
+ *   - Hat down = reverse jam
  *
- * CLIMBER (ClimberSubsys) — 1 TalonFX motor
- *   - CAN 12 = climber motor
- *   - CLIMB_UP = 0.5 duty cycle, CLIMB_DOWN = -0.5
- *   - Current limits: 60A/60A, Brake mode
- *   - Used in auto L1 climb sequences and the "jolt" intake deploy
+ * CLIMBER — removed. hopperDeploy / jolt / Climb* named commands are no-ops.
  *
- * LIMELIGHT (LimelightSubsys) — ENABLED
- *   - Limelight 3 camera for AprilTag vision
- *   - Uses MegaTag2 pose estimation with alliance-based tag filtering
- *   - Feeds pose estimates into drivetrain's Kalman filter
- *   - Camera: 1.46" behind center, 25.39" high, 20° above horizontal
+ * LIMELIGHT ("limelight")
+ *   - 1.46" behind center, 25.39" up, 26° pitch. Fiducial offset -0.5842 m
+ *     (keep until range day). Pipeline 0 AprilTag / MegaTag2 XY-only.
+ *   - Pipeline 1 Fuel B1 (hold operator 3). Alliance hub tags only for aim.
  *
- * OPERATOR CONTROLS (X3D Joystick, port 1)
- *   Button 1  = Shoot (runs feeder motors — hold to feed balls)
- *   Button 2  = Intake with Oscillate (fast — hold)
- *   Button 3  = Climber Down (hold)
- *   Button 4  = Retract Intake (rotate to 580°)
- *   Button 5  = Climber Up (hold)
- *   Button 6  = Deploy Intake (rotate to -585°)
- *   Button 7  = Wind Up Closer (3350 RPM, hood 0.0 — hold)
- *   Button 8  = Hopper Release (climber up/down sequence — press once)
- *   Button 9  = Wind Up Close (3350 RPM, hood 0.3 — hold)
- *   Button 10 = Snap Wheels to 0° (hold)
- *   Button 11 = Wind Up Test (3350 RPM, hood 0.45 — hold)
- *   Button 12 = Retract with Oscillate (fast — hold)
- *   Hat Down  = Reverse All (eject jammed ball — intake + feeder backward)
+ * OPERATOR (X3D port 1)
+ *   1  = Shoot (feeder + intake bounce) + hold 1/5 drive
+ *   2  = Intake oscillate + hold 1/2 drive
+ *   3  = Fuel assist (pipeline 1, default flag OFF)
+ *   4  = Retract    5 = AutoshootFeed (default OFF)
+ *   6  = Deploy     7 = closer hub windup (3350 / 0.0)
+ *   8  = Pass windup (3500 / 0.75)
+ *   9  = Close windup    10 = snap wheels
+ *   11 = Test hood       12 = retract oscillate
+ *   Hat down = reverse; hat left = exposure tune (disabled only)
  *
  * AUTONOMOUS
- *   - Uses PathPlanner with NamedCommands for event markers
- *   - Key named commands: shoot, StopFeed, windUp, windUpOnce,
- *     AdjustedWindUp, AdjustedShootWhileMoving, AdjustedWindUpOnce,
- *     IntakeMid, IntakeFast, StopIntake, ClimbUp, ClimbDown,
- *     StopClimber, jolt
- *   - "jolt" = raises climber, drives forward, brakes hard to deploy
- *     intake mechanically, then lowers climber back down
- *   - Robot is TOO TALL for trench — must use bump ramps to cross field
- *   - Shoot-while-moving uses predicted position (0.25s lookahead)
+ *   PathPlanner AutoBuilder. Sequential named commands must finish.
+ *   Aliases: intakeStop=StopIntake, hopperDeploy=hopperDeploy,
+ *   hoodReset=hoodReset, intakeDeploy=intakeDeploy.
+ *   Robot is too tall for trench; bump-ramp autos only. No climb auto.
  *
  * MOTOR CAN IDs
- *   8  = Shooter leader (inverted)
- *   9  = Shooter follower
- *   10 = Shooter follower
- *   11 = Fuel feed (on shooter, controlled by FeederSubsys)
- *   12 = Climber
- *   45 = Intake roller
- *   50 = Intake rotator
- *   51 = Feeder
- *   (Swerve drive motors are defined in TunerConstants)
- *
+ *   8/9/10 shooter, 11 fuel feed, 45 intake roller, 50 rotator, 51 feeder
+ *   Swerve in TunerConstants (do not change 35 A drive limits)
  * =========================================================================
  */
 
@@ -117,10 +74,11 @@ import static edu.wpi.first.units.Units.*;
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
+import edu.wpi.first.math.filter.SlewRateLimiter;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import com.pathplanner.lib.auto.AutoBuilder;
-import com.pathplanner.lib.auto.NamedCommands;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
@@ -132,208 +90,225 @@ import frc.lib.util.CommandX3DController;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.FeederSubsys;
-import frc.robot.subsystems.IntakeSubsys;
 import frc.robot.subsystems.HoodSubsys;
+import frc.robot.subsystems.IntakeSubsys;
 import frc.robot.subsystems.LimelightSubsys;
-import edu.wpi.first.math.filter.SlewRateLimiter;
 import frc.robot.subsystems.ShooterSubsys;
 
 public class RobotContainer {
-    private double MaxSpeed = 1.0 * TunerConstants.kSpeedAt12Volts.in(MetersPerSecond); // kSpeedAt12Volts desired top speed
-    private double MaxAngularRate = RotationsPerSecond.of(1.5).in(RadiansPerSecond); // 1.5 rotations per second max angular velocity
+    private double MaxSpeed = 1.0 * TunerConstants.kSpeedAt12Volts.in(MetersPerSecond);
+    private double MaxAngularRate = RotationsPerSecond.of(1.5).in(RadiansPerSecond);
 
-    // Slew rate limiters: 1.5/sec accel, 100/sec decel (instant stop)
     private final SlewRateLimiter xLimiter = new SlewRateLimiter(1.5, -100, 0);
     private final SlewRateLimiter yLimiter = new SlewRateLimiter(1.5, -100, 0);
 
-    /* Setting up bindings for necessary control of the swerve drive platform */
     private final SwerveRequest.FieldCentric drive = new SwerveRequest.FieldCentric()
-            .withDeadband(MaxSpeed * 0.05).withRotationalDeadband(MaxAngularRate * 0.075) // 30% translation, 15% rotation deadband
-            .withDriveRequestType(DriveRequestType.OpenLoopVoltage); // Use open-loop control for drive motors
+            .withDeadband(MaxSpeed * 0.05).withRotationalDeadband(MaxAngularRate * 0.075)
+            .withDriveRequestType(DriveRequestType.OpenLoopVoltage);
     private final SwerveRequest.SwerveDriveBrake brake = new SwerveRequest.SwerveDriveBrake();
     private final SwerveRequest.PointWheelsAt point = new SwerveRequest.PointWheelsAt();
 
     private final Telemetry logger = new Telemetry(MaxSpeed);
     private final SendableChooser<Command> autoChooser;
+    private String cachedAutoName = "None";
+    private boolean visionSeeded = false;
 
     private final CommandXboxController joystick = new CommandXboxController(0);
     private final CommandX3DController operator = new CommandX3DController(1);
 
-
     public final CommandSwerveDrivetrain drivetrain = TunerConstants.createDrivetrain();
 
-    // Subsystems from Re-made branch
     private final ShooterSubsys shooter = new ShooterSubsys();
     private final IntakeSubsys intake = new IntakeSubsys();
     private final FeederSubsys feeder = new FeederSubsys();
     private final HoodSubsys hood = new HoodSubsys();
-    private final LimelightSubsys limelight = new LimelightSubsys("limelight", () -> drivetrain.getState().Pose);
+    private final LimelightSubsys limelight = new LimelightSubsys(
+        "limelight",
+        () -> drivetrain.getState().Pose,
+        () -> drivetrain.getState().Pose.getRotation().getDegrees()
+    );
 
     public RobotContainer() {
         RobotCommands.init(shooter, feeder, hood, intake, drivetrain, limelight);
         configureBindings();
-        // Register named commands for PathPlanner event markers
-        // ── Shooting ──────────────────────────────────────────────────────────
-        NamedCommands.registerCommand("shoot", RobotCommands.Shoot());
-        NamedCommands.registerCommand("autoShoot", RobotCommands.autoShoot(4));
-        NamedCommands.registerCommand("StopFeed", RobotCommands.stopFeed());
-        // Fixed shot (no vision): set RPM/hood to hardcoded values
-        NamedCommands.registerCommand("windUp", RobotCommands.windUp());
-        NamedCommands.registerCommand("windUpOnce", RobotCommands.windUpOnce());
-        // Auto wind-up commands: set RPM/hood, wait until at speed (max 2s), then finish
-        NamedCommands.registerCommand("autoWindUp", RobotCommands.autoWindUp());
-        NamedCommands.registerCommand("autoWindUpClose", RobotCommands.autoWindUpClose());
-        NamedCommands.registerCommand("autoWindUpCloser", RobotCommands.autoWindUpCloser());
-        // Distance-adjusted shot: interpolates RPM/hood from odometry distance
-        // For the vision auto variant, pair this with accurate pose correction
-        NamedCommands.registerCommand("AdjustedWindUp", RobotCommands.adjustedWindUp());
-        // Moving shot: adjusts RPM/hood continuously + feeds; use as deadline alongside a path
-        NamedCommands.registerCommand("AdjustedShootWhileMoving", RobotCommands.adjustedShootWhileMoving());
-        // Static shot wind-up: snaps to distance-based RPM/hood then waits for spinup
-        NamedCommands.registerCommand("AdjustedWindUpOnce", RobotCommands.adjustedWindUpOnce());
-        // ── Intake ────────────────────────────────────────────────────────────
-        NamedCommands.registerCommand("IntakeMid", RobotCommands.intakeMid());
-        NamedCommands.registerCommand("IntakeFast", RobotCommands.intakeFast());
-        NamedCommands.registerCommand("StopIntake", RobotCommands.stopIntake());
-        NamedCommands.registerCommand("intakeDeploy", intake.goToPositionCommand(-14.5));
-        NamedCommands.registerCommand("intakeBounce", Commands.none()); // bounce is now built into autoShoot
-        // Vision updates now run automatically in robotPeriodic() — no named command needed
-        // ── Climber commands (motor removed — register as no-ops so PathPlanner autos don't error)
-        NamedCommands.registerCommand("jolt", Commands.none());
-        NamedCommands.registerCommand("ClimbUp", Commands.none());
-        NamedCommands.registerCommand("ClimbDown", Commands.none());
-        NamedCommands.registerCommand("climbDown", Commands.none());
-        NamedCommands.registerCommand("StopClimber", Commands.none());
-        NamedCommands.registerCommand("hopperDeploy", Commands.none());
-        NamedCommands.registerCommand("VisionUpdate", Commands.none());
-        NamedCommands.registerCommand("hoodReset", Commands.runOnce(() -> hood.setPosition(0)));
+        registerNamedCommands();
+        drivetrain.registerTelemetry(logger::telemeterize);
 
         autoChooser = AutoBuilder.buildAutoChooser("M-S");
         SmartDashboard.putData("Auto Chooser", autoChooser);
     }
 
+    private void registerNamedCommands() {
+        NamedCommandRegistry.register("shoot", RobotCommands::Shoot, feeder, intake);
+        NamedCommandRegistry.register("shootHold", RobotCommands::Shoot, feeder, intake);
+        NamedCommandRegistry.register("autoShoot", () -> RobotCommands.autoShoot(4), feeder, intake);
+        NamedCommandRegistry.register("StopFeed", RobotCommands::stopFeed, feeder);
+        NamedCommandRegistry.register("windUp", RobotCommands::windUpOnce, shooter, hood);
+        NamedCommandRegistry.register("windUpOnce", RobotCommands::windUpOnce, shooter, hood);
+        NamedCommandRegistry.register("autoWindUp", RobotCommands::autoWindUp, shooter, hood);
+        NamedCommandRegistry.register("autoWindUpClose", RobotCommands::autoWindUpClose, shooter, hood);
+        NamedCommandRegistry.register("autoWindUpCloser", RobotCommands::autoWindUpCloser, shooter, hood);
+        NamedCommandRegistry.register("AdjustedWindUp", RobotCommands::adjustedWindUp, shooter, hood);
+        NamedCommandRegistry.register("AdjustedShootWhileMoving", RobotCommands::adjustedShootWhileMoving, shooter, hood, feeder);
+        NamedCommandRegistry.register("AdjustedWindUpOnce", RobotCommands::adjustedWindUpOnce, shooter, hood);
+        NamedCommandRegistry.register("IntakeMid", RobotCommands::intakeMid, intake);
+        NamedCommandRegistry.register("IntakeFast", RobotCommands::intakeFast, intake);
+        NamedCommandRegistry.register("IntakeFast", RobotCommands::intakeFast, intake);
+        NamedCommandRegistry.register("StopIntake", RobotCommands::stopIntake, intake);
+        NamedCommandRegistry.register("intakeStop", RobotCommands::stopIntake, intake);
+        NamedCommandRegistry.register("intakeDeploy", () -> intake.goToPositionCommand(-14.5), intake);
+        NamedCommandRegistry.register("intakeDeploy", () -> intake.goToPositionCommand(-14.5), intake);
+        NamedCommandRegistry.register("intakeBounce", Commands::none);
+        NamedCommandRegistry.register("hoodReset", () -> Commands.runOnce(() -> hood.setPosition(0)), hood);
+        NamedCommandRegistry.register("hoodReset", () -> Commands.runOnce(() -> hood.setPosition(0)), hood);
+
+        NamedCommandRegistry.registerNone("jolt");
+        NamedCommandRegistry.registerNone("ClimbUp");
+        NamedCommandRegistry.registerNone("ClimbDown");
+        NamedCommandRegistry.registerNone("climbDown");
+        NamedCommandRegistry.registerNone("StopClimber");
+        NamedCommandRegistry.registerNone("hopperDeploy");
+        NamedCommandRegistry.registerNone("hopperDeploy");
+        NamedCommandRegistry.registerNone("VisionUpdate");
+    }
+
+    private double slewedForward() {
+        double leftY = joystick.getLeftY();
+        double leftX = joystick.getLeftX();
+        boolean translationDead = Math.abs(leftY) < 0.05 && Math.abs(leftX) < 0.05;
+        if (translationDead) {
+            xLimiter.reset(0);
+            yLimiter.reset(0);
+            return 0;
+        }
+        double squaredY = -Math.copySign(leftY * leftY, leftY);
+        return xLimiter.calculate(squaredY) * MaxSpeed * drivetrain.getCurrentSpeedMulti();
+    }
+
+    private double slewedStrafe() {
+        double leftY = joystick.getLeftY();
+        double leftX = joystick.getLeftX();
+        boolean translationDead = Math.abs(leftY) < 0.05 && Math.abs(leftX) < 0.05;
+        if (translationDead) {
+            return 0;
+        }
+        double squaredX = -Math.copySign(leftX * leftX, leftX);
+        return yLimiter.calculate(squaredX) * MaxSpeed * drivetrain.getCurrentSpeedMulti();
+    }
+
     private void configureBindings() {
-        // Note that X is defined as forward according to WPILib convention,
-        // and Y is defined as to the left according to WPILib convention.
         drivetrain.setDefaultCommand(
-            // Drivetrain will execute this command periodically
             drivetrain.applyRequest(() -> {
-                // Squared input + slew rate limiting for smooth, precise control
                 double leftY = joystick.getLeftY();
                 double leftX = joystick.getLeftX();
                 double rightX = joystick.getRightX();
-
-                // If translation joystick is within deadband, stop instantly (no slew ramp-down)
                 boolean translationDead = Math.abs(leftY) < 0.05 && Math.abs(leftX) < 0.05;
-
-
                 if (translationDead) {
                     xLimiter.reset(0);
                     yLimiter.reset(0);
                 }
-
-
                 double squaredY = translationDead ? 0 : -Math.copySign(leftY * leftY, leftY);
                 double squaredX = translationDead ? 0 : -Math.copySign(leftX * leftX, leftX);
-                double sqrtRot = -Math.copySign(Math.pow(Math.abs(rightX), 1.5), rightX); // x^1.5 curve for rotation
+                double sqrtRot = -Math.copySign(Math.pow(Math.abs(rightX), 1.5), rightX);
                 double slewedY = translationDead ? 0 : xLimiter.calculate(squaredY);
                 double slewedX = translationDead ? 0 : yLimiter.calculate(squaredX);
-                return drive.withVelocityX(slewedY * MaxSpeed * drivetrain.getCurrentSpeedMulti())
-                    .withVelocityY(slewedX * MaxSpeed * drivetrain.getCurrentSpeedMulti())
+                double transScale = shooter.isSpooling() ? 0.75 : 1.0;
+                return drive.withVelocityX(slewedY * MaxSpeed * drivetrain.getCurrentSpeedMulti() * transScale)
+                    .withVelocityY(slewedX * MaxSpeed * drivetrain.getCurrentSpeedMulti() * transScale)
                     .withRotationalRate(sqrtRot * MaxAngularRate);
             })
         );
 
-        // Snap wheels to 0 for 0.5s then resume driving (steer motors hold in Brake mode)
         joystick.leftTrigger().onTrue(
             drivetrain.applyRequest(() -> point.withModuleDirection(new Rotation2d(0)))
                 .withTimeout(0.5));
-        // Toggle 1/5th speed with right trigger (press once to toggle)
         joystick.rightTrigger().onTrue(drivetrain.toggleSpeedMulti(1.0 / 5.0));
-        // Idle while the robot is disabled. This ensures the configured
-        // neutral mode is applied to the drive motors while disabled.
         final var idle = new SwerveRequest.Idle();
         RobotModeTriggers.disabled().whileTrue(
             drivetrain.applyRequest(() -> idle).ignoringDisable(true)
         );
 
         joystick.a().whileTrue(drivetrain.applyRequest(() -> brake));
-        // Toggle full speed with B button (default is 75%)
         joystick.b().onTrue(drivetrain.toggleSpeedMulti(1.0));
 
-        // Run SysId routines when holding back/start and X/Y.
-        // Note that each routine should be run exactly once in a single log.
-        joystick.back().and(joystick.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
-        joystick.back().and(joystick.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
-        joystick.start().and(joystick.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
-        joystick.start().and(joystick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
+        var sysIdMode = RobotModeTriggers.disabled().or(RobotModeTriggers.test());
+        joystick.back().and(joystick.y()).and(sysIdMode).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
+        joystick.back().and(joystick.x()).and(sysIdMode).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
+        joystick.start().and(joystick.y()).and(sysIdMode).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
+        joystick.start().and(joystick.x()).and(sysIdMode).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
-        // Reset the field-centric heading on left bumper press.
         joystick.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
 
-        // D-pad up/down = manual intake up/down
-        joystick.povUp().whileTrue(RobotCommands.windUp75()); // 75.125" wind up
+        joystick.povUp().whileTrue(RobotCommands.windUp75());
         joystick.povDown().whileTrue(intake.slowRotateCommand(.025));
-        // D-pad left/right = precise intake rotation at 1 RPM motor
         joystick.povLeft().whileTrue(intake.creepRotateCommand(-1));
         joystick.povRight().whileTrue(intake.creepRotateCommand(1));
 
-        // Hold right bumper to auto-aim at target + spin up shooter (distance-based RPM)
-        // When "Shooter At Speed" turns green, operator pulls trigger to fire instantly
         joystick.rightBumper().whileTrue(
-            RobotCommands.aimAndWindUp(
-                () -> -joystick.getLeftY() * MaxSpeed,
-                () -> -joystick.getLeftX() * MaxSpeed,
-                MaxSpeed
-            )
+            RobotCommands.aimAndWindUp(this::slewedForward, this::slewedStrafe, MaxSpeed)
         );
-
-        // Hold Y to auto-aim full-field pass: aims 15° inward from trench AprilTag + spins up full-field pass RPM
         joystick.y().whileTrue(
-            RobotCommands.aimAndPassFullField(
-                () -> -joystick.getLeftY() * MaxSpeed,
-                () -> -joystick.getLeftX() * MaxSpeed,
-                MaxSpeed
-            )
+            RobotCommands.aimAndPassFullField(this::slewedForward, this::slewedStrafe, MaxSpeed)
         );
 
-        // ===== Operator X3D Joystick =====
         operator.button(1).whileTrue(RobotCommands.Shoot());
-       // operator.button(15).whileTrue(RobotCommands.windUp());
         operator.button(11).whileTrue(RobotCommands.windUpTest());
-        operator.button(9).whileTrue(RobotCommands.windUpClose()); // Close-range shot
+        operator.button(9).whileTrue(RobotCommands.windUpClose());
         operator.button(2).whileTrue(intake.intakeWithOscillateCommand(IntakeSubsys.IntakeSpeed.INTAKE_FAST));
         operator.button(2).whileTrue(drivetrain.holdSpeedMulti(1.0 / 2.0));
         operator.button(1).whileTrue(drivetrain.holdSpeedMulti(1.0 / 5.0));
         operator.button(12).whileTrue(intake.retractWithOscillateCommand(IntakeSubsys.IntakeSpeed.INTAKE_FAST));
-        // Removed: was conflicting with Shoot() on intakeSubsys — Shoot() already bounces the intake
-        // operator.button(1).whileTrue(intake.retractWithGentleOscillateCommand(IntakeSubsys.IntakeSpeed.INTAKE_FAST));
-        operator.button(7).whileTrue(RobotCommands.windUpCloser());//infront hub shot
-        operator.button(6).onTrue(intake.goToPositionSlowCommand(-14.20, 0.3)); // Deploy intake
-        operator.button(4).onTrue(intake.goToPositionSlowCommand(-0.14423828125, 0.2)); // Retract intake
+        operator.button(7).whileTrue(RobotCommands.windUpCloser());
+        operator.button(6).onTrue(intake.goToPositionSlowCommand(-14.20, 0.3));
+        operator.button(4).onTrue(intake.goToPositionSlowCommand(-0.14423828125, 0.2));
         operator.button(10).whileTrue(drivetrain.applyRequest(() ->
-            point.withModuleDirection(new Rotation2d(0)))); // Snap wheels forward
-        operator.pov(180).whileTrue(RobotCommands.reverseAll()); // Hat down = eject jammed ball
-        operator.pov(270).onTrue(RobotCommands.autoTuneExposure()); // Hat left = auto-tune LL exposure
+            point.withModuleDirection(new Rotation2d(0))));
+        operator.pov(180).whileTrue(RobotCommands.reverseAll());
+        operator.pov(270).and(RobotModeTriggers.disabled()).onTrue(RobotCommands.autoTuneExposure());
         operator.button(8).whileTrue(RobotCommands.windUpPass());
+        operator.button(3).whileTrue(
+            RobotCommands.fuelAssist(this::slewedForward, this::slewedStrafe, MaxSpeed)
+        );
+        operator.button(5).whileTrue(RobotCommands.autoshootFeed(joystick.getHID()));
     }
 
     public Command getAutonomousCommand() {
         return autoChooser.getSelected();
     }
 
-    // Maximum distance (meters) a vision update can jump from current pose before we reject it.
-    // Prevents a single bad Limelight frame from corrupting the auto start position.
-    private static final double kMaxVisionJumpMeters = 1.0;
+    public void updateDashboard() {
+        Command selected = autoChooser.getSelected();
+        String name = selected != null ? selected.getName() : "None";
+        if (!name.equals(cachedAutoName)) {
+            cachedAutoName = name;
+        }
+        SmartDashboard.putString("Selected Auto", cachedAutoName);
+        SmartDashboard.putBoolean("VisionSeeded", visionSeeded);
+        RobotCommands.updateHud();
+    }
 
-    /**
-     * Runs a single vision update cycle — reads the Limelight, and if a valid
-     * measurement is available, feeds it into the drivetrain's Kalman filter.
-     * Called from robotPeriodic() so it runs every cycle in all modes.
-     */
+    private static final double kMaxVisionJumpTeleopMeters = 1.0;
+    private static final double kMaxVisionJumpAutoMeters = 2.0;
+    private static final double kMaxYawRateDegPerSec = 360.0;
+
     public void updateVision() {
-        if (limelight == null) return;
+        if (limelight == null) {
+            return;
+        }
+        if (DriverStation.isAutonomous() && !FeatureFlags.visionInAuto()) {
+            return;
+        }
         limelight.getMeasurement().ifPresent(measurement -> {
+            final Pose2d currentPose = drivetrain.getState().Pose;
+            final double jump = currentPose.getTranslation()
+                .getDistance(measurement.poseEstimate.pose.getTranslation());
+            final double maxJump = DriverStation.isAutonomous()
+                ? kMaxVisionJumpAutoMeters
+                : kMaxVisionJumpTeleopMeters;
+            final double yawRate = Math.abs(drivetrain.getPigeon2().getAngularVelocityZWorld().getValueAsDouble());
+            if (jump > maxJump || yawRate > kMaxYawRateDegPerSec) {
+                return;
+            }
             drivetrain.addVisionMeasurement(
                 measurement.poseEstimate.pose,
                 measurement.poseEstimate.timestampSeconds,
@@ -342,20 +317,18 @@ public class RobotContainer {
         });
     }
 
-    /**
-     * Seeds the drivetrain pose from Limelight vision while disabled.
-     * Rejects measurements that jump more than 1 meter from the current estimate
-     * to protect against bad frames corrupting the auto start position.
-     */
     public void seedPoseFromVision() {
-        if (limelight == null) return;
+        if (limelight == null) {
+            return;
+        }
         final Pose2d currentPose = drivetrain.getState().Pose;
-        limelight.getMeasurement().ifPresent(measurement -> {
+        limelight.getMegaTag1Measurement().ifPresent(measurement -> {
             final double jump = currentPose.getTranslation()
                 .getDistance(measurement.poseEstimate.pose.getTranslation());
-            if (jump < kMaxVisionJumpMeters || currentPose.getTranslation().getNorm() < 0.01) {
-                // Accept if jump is small, OR if current pose is near origin (uninitialized)
+            if (jump < kMaxVisionJumpTeleopMeters || currentPose.getTranslation().getNorm() < 0.01 || !visionSeeded) {
                 drivetrain.resetPose(measurement.poseEstimate.pose);
+                visionSeeded = true;
+                SmartDashboard.putBoolean("VisionSeeded", true);
             }
         });
     }

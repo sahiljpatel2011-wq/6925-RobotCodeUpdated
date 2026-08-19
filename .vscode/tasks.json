@@ -1,0 +1,54 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "${workspaceFolder}/gradlew",
+      "args": ["build"],
+      "windows": {
+        "command": "${workspaceFolder}/gradlew.bat",
+        "args": ["build"]
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "${workspaceFolder}/gradlew",
+      "args": ["test"],
+      "windows": {
+        "command": "${workspaceFolder}/gradlew.bat",
+        "args": ["test"]
+      },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "simulateJava",
+      "type": "shell",
+      "command": "${workspaceFolder}/gradlew",
+      "args": ["simulateJava"],
+      "windows": {
+        "command": "${workspaceFolder}/gradlew.bat",
+        "args": ["simulateJava"]
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "deploy",
+      "type": "shell",
+      "command": "${workspaceFolder}/gradlew",
+      "args": ["deploy"],
+      "windows": {
+        "command": "${workspaceFolder}/gradlew.bat",
+        "args": ["deploy"]
+      },
+      "problemMatcher": []
+    }
+  ]
+}

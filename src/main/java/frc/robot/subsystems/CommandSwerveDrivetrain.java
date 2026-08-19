@@ -344,20 +344,34 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
     /* Speed Multiplier */
     private static final double kDefaultSpeedMulti = 0.75;
     private double speedMulti = kDefaultSpeedMulti;
+    private int speedHoldCount = 0;
 
     public Command toggleSpeedMulti(double multi) {
         return Commands.runOnce(() -> speedMulti = (speedMulti == kDefaultSpeedMulti ? multi : kDefaultSpeedMulti), this);
     }
 
-    /** Temporarily sets speed multiplier while held, restores default on release. */
+    /** Temporarily sets speed multiplier while held. Default 0.75 only when every hold is released. */
     public Command holdSpeedMulti(double multi) {
         return Commands.startEnd(
-            () -> speedMulti = multi,
-            () -> speedMulti = kDefaultSpeedMulti
+            () -> {
+                speedHoldCount++;
+                speedMulti = multi;
+            },
+            () -> {
+                speedHoldCount = Math.max(0, speedHoldCount - 1);
+                if (speedHoldCount == 0) {
+                    speedMulti = kDefaultSpeedMulti;
+                }
+            }
         );
     }
 
     public double getCurrentSpeedMulti() {
         return speedMulti;
+    }
+
+    /** wpiBlue field heading from Pigeon odometry (not vision-fused theta). */
+    public double getGyroYawDegrees() {
+        return getPigeon2().getYaw().getValueAsDouble();
     }
 }

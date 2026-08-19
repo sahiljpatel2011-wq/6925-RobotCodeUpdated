@@ -47,22 +47,9 @@
           }
         },
         {
-          "type": "parallel",
+          "type": "named",
           "data": {
-            "commands": [
-              {
-                "type": "named",
-                "data": {
-                  "name": "autoShoot"
-                }
-              },
-              {
-                "type": "named",
-                "data": {
-                  "name": "AdjustedWindUpOnce"
-                }
-              }
-            ]
+            "name": "autoShoot"
           }
         }
       ]
