@@ -37,10 +37,26 @@ All names are registered with `Commands.defer` so each schedule gets a fresh com
 
 ## Hood
 
-`hoodReset` / `hoodReset` → hood 0.
+| `hoodReset` | `hoodReset` | Default hood 0.50 (not 0). |
 
 ## New autos
 
-- **Taxi-Shoot** — mild accel taxi, `AdjustedWindUpOnce` + `autoShoot`.
-- **Center-VisionShot** — repaired hub-front shot with vision in auto.
-- **Bump-2Piece** — bump ramp, not trench. No climb.
+- **Taxi-Shoot** — drive the taxi path (table windup as a path event), then `AdjustedWindUpOnce` at the shoot pose, then `autoShoot`.
+- **Center-VisionShot** / **M-S** — hub-front path first (range updates on the path), then `AdjustedWindUpOnce` + `autoShoot`.
+- **Bump-2Piece** — bump ramp collect, `StopIntake`, `RB-S` pointed at the hub, then windup + shoot. No climb.
+
+## Hub autos (no bump)
+
+All stay on alliance-side carpet in front of the hub (`x ≤ 3.2 m` on blue). They do **not** cross the bump ramps (`x ≈ 3.96–5.09 m`) or the trench. PathPlanner folder **Hub-NoBump**. Flip for red.
+
+| Auto / path | Start (blue) | Shot pose | Table range |
+| --- | --- | --- | --- |
+| `Center-Hub` | wall center `(0.70, 4.04)` | `(2.72, 4.04)` | ~75 in |
+| `Close-Hub` | wall center | `(3.15, 4.04)` | ~58 in |
+| `Far-Hub` | wall center | `(2.08, 4.04)` | ~100 in |
+| `Left-Hub` | left wall `(0.70, 6.85)` | same 75 in pose | curves in on carpet |
+| `Right-Hub` | right wall `(0.70, 1.20)` | same 75 in pose | curves in on carpet |
+| `Alley-Left-Hub` | left of hub `(2.40, 5.10)` | 75 in pose | short align |
+| `Alley-Right-Hub` | right of hub `(2.40, 2.95)` | 75 in pose | short align |
+
+Each auto: path (points at hub, `AdjustedWindUp` on the way) → `AdjustedWindUpOnce` → `autoShoot` → `StopFeed`.

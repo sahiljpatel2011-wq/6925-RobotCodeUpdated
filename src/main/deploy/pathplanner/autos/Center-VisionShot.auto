@@ -5,15 +5,15 @@
     "data": {
       "commands": [
         {
-          "type": "named",
-          "data": {
-            "name": "AdjustedWindUpOnce"
-          }
-        },
-        {
           "type": "path",
           "data": {
             "pathName": "Basic Shoot from infront target"
+          }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": "AdjustedWindUpOnce"
           }
         },
         {

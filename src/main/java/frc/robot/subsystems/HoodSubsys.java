@@ -12,7 +12,11 @@ import edu.wpi.first.units.measure.Time;
 import edu.wpi.first.util.sendable.SendableBuilder;
 import edu.wpi.first.wpilibj.Servo;
 import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.smartdashboard.Mechanism2d;
+import edu.wpi.first.wpilibj.smartdashboard.MechanismLigament2d;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj.util.Color;
+import edu.wpi.first.wpilibj.util.Color8Bit;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
@@ -29,6 +33,8 @@ public class HoodSubsys extends SubsystemBase {
 
     private final Servo leftServo;
     private final Servo rightServo;
+    private final Mechanism2d hoodMech = new Mechanism2d(60, 60);
+    private final MechanismLigament2d hoodArm;
 
     private double currentPosition = 0.0;
     private double targetPosition = 0.0;
@@ -44,8 +50,13 @@ public class HoodSubsys extends SubsystemBase {
         rightServo = new Servo(kRightServoPWM);
         leftServo.setBoundsMicroseconds(2000, 1800, 1500, 1200, 1000);
         rightServo.setBoundsMicroseconds(2000, 1800, 1500, 1200, 1000);
-        setPosition(currentPosition);
-        //SmartDashboard.putData(this);
+        hoodArm = hoodMech.getRoot("Pivot", 8, 8)
+            .append(new MechanismLigament2d("Hood", 40, 12, 8, new Color8Bit(Color.kOrange)));
+        SmartDashboard.putData("Hood", hoodMech);
+        SmartDashboard.putData(this);
+        setPosition(frc.robot.Constants.ShooterConstants.kDefaultHoodPosition);
+        currentPosition = targetPosition;
+        smoothedPosition = targetPosition;
     }
 
     /** Expects a position between 0.0 and 1.0. Applies EMA smoothing to reduce jitter. */
@@ -55,6 +66,22 @@ public class HoodSubsys extends SubsystemBase {
         leftServo.set(smoothedPosition);
         rightServo.set(smoothedPosition);
         targetPosition = smoothedPosition;
+        updateHoodGraphic();
+    }
+
+    public double getPosition() {
+        return targetPosition;
+    }
+
+    /** Approximate launch elevation for HUD/sim (0.01 ≈ 12°, 0.77 ≈ 70°). */
+    public double getAngleDegrees() {
+        final double span = kMaxPosition - kMinPosition;
+        final double t = MathUtil.clamp((targetPosition - kMinPosition) / span, 0.0, 1.0);
+        return 12.0 + t * 58.0;
+    }
+
+    private void updateHoodGraphic() {
+        hoodArm.setAngle(getAngleDegrees());
     }
 
     /** Expects a position between 0.0 and 1.0 */
@@ -87,7 +114,10 @@ public class HoodSubsys extends SubsystemBase {
     @Override
     public void periodic() {
         updateCurrentPosition();
+        updateHoodGraphic();
         SmartDashboard.putBoolean("Hood At Position", isPositionWithinTolerance());
+        SmartDashboard.putNumber("Hood Position", targetPosition);
+        SmartDashboard.putNumber("Hood Angle (deg)", getAngleDegrees());
     }
 
     @Override

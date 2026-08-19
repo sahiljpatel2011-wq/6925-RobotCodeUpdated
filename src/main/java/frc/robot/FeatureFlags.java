@@ -61,6 +61,7 @@ public final class FeatureFlags {
         SmartDashboard.putBoolean("Flag hubTagAimFilter", DEFAULT_HUB_TAG_AIM_FILTER);
         SmartDashboard.putBoolean("Flag fuelAssist", DEFAULT_FUEL_ASSIST);
         SmartDashboard.putBoolean("Flag autoshootFeed", DEFAULT_AUTOSHOOT_FEED);
+        SmartDashboard.putBoolean("Flag visionPoseFuse", DEFAULT_VISION_POSE_FUSE);
     }
 
     public static boolean visionInAuto() {

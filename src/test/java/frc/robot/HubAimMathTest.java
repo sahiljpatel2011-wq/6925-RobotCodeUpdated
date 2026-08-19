@@ -16,6 +16,8 @@ class HubAimMathTest {
         assertTrue(HubAimMath.isHubTag(8));
         assertTrue(HubAimMath.isHubTag(19));
         assertTrue(HubAimMath.isHubTag(27));
+        assertTrue(HubAimMath.isHubTag(10));
+        assertTrue(HubAimMath.isHubTag(26));
         assertFalse(HubAimMath.isHubTag(7));
         assertFalse(HubAimMath.isHubTag(15));
         assertTrue(HubAimMath.isAllianceHubTag(18, true));
@@ -54,9 +56,70 @@ class HubAimMathTest {
     }
 
     @Test
+    void poseAimTxMatchesLimelightSign() {
+        // Facing +X: +Y is left (negative tx), -Y is right (positive tx).
+        assertTrue(HubAimMath.poseAimTxDegrees(0.0, 0.0, 0.0, 0.0, 1.0) < -45.0);
+        assertTrue(HubAimMath.poseAimTxDegrees(0.0, 0.0, 0.0, 0.0, -1.0) > 45.0);
+        assertEquals(0.0, HubAimMath.poseAimTxDegrees(0.0, 0.0, 0.0, 2.0, 0.0), 1e-6);
+    }
+
+    @Test
     void hubAimTxIsDefinedForCenteredTag() {
         assertTrue(HubAimMath.hubAimTxDegrees(2, 0.0, 0.0).isPresent());
         assertTrue(HubAimMath.hubRangeInches(2, 0.0, 0.0).getAsDouble() > 23.5);
         assertTrue(HubAimMath.hubAimTxDegrees(7, 0.0, 0.0).isEmpty());
+    }
+
+    @Test
+    void areaWeightedHubAimBiasesTowardLargerTag() {
+        final double leftTx = HubAimMath.hubAimTxDegrees(2, -4.0, 0.0).getAsDouble();
+        final double rightTx = HubAimMath.hubAimTxDegrees(2, 4.0, 0.0).getAsDouble();
+        final var equal = HubAimMath.areaWeightedHubAim(
+            new int[] {2, 2},
+            new double[] {-4.0, 4.0},
+            new double[] {0.0, 0.0},
+            new double[] {1.0, 1.0}
+        ).orElseThrow();
+        assertEquals((leftTx + rightTx) / 2.0, equal.txDegrees, 1e-6);
+        assertEquals(2, equal.count);
+
+        final var biased = HubAimMath.areaWeightedHubAim(
+            new int[] {2, 2},
+            new double[] {-4.0, 4.0},
+            new double[] {0.0, 0.0},
+            new double[] {0.2, 1.8}
+        ).orElseThrow();
+        assertTrue(biased.txDegrees > equal.txDegrees);
+        assertEquals(2, biased.bestId);
+    }
+
+    @Test
+    void hubTagIsUsedEvenWhenTyCannotGiveRange() {
+        final var aim = HubAimMath.areaWeightedHubAim(
+            new int[] {26},
+            new double[] {4.0},
+            new double[] {-26.0},
+            new double[] {1.0}
+        ).orElseThrow();
+        assertEquals(4.0, aim.txDegrees, 1e-6);
+        assertEquals(26, aim.bestId);
+        assertTrue(Double.isNaN(aim.rangeInches));
+        assertEquals(26, HubAimMath.preferredHubTagId(true));
+        assertEquals(10, HubAimMath.preferredHubTagId(false));
+    }
+
+    @Test
+    void tagGeometryDoesNotDoubleCountHubHeading() {
+        final double robotX = 2.55;
+        final double robotY = 4.04;
+        final double hubX = 4.625;
+        final double hubY = 4.035;
+        final double[] tag = HubAimMath.tagXyMeters(robotX, robotY, hubX, hubY);
+        final double tagTx = HubAimMath.poseAimTxDegrees(robotX, robotY, 0.0, tag[0], tag[1]);
+        final double cameraToTag = Math.hypot(tag[0] - robotX, tag[1] - robotY) / 0.0254;
+        final double ty = HubAimMath.tyDegreesFromCameraToTagInches(cameraToTag);
+        final double hubTx = HubAimMath.hubAimTxDegrees(2, tagTx, ty).orElseThrow();
+        final double hubHeading = HubAimMath.poseAimTxDegrees(robotX, robotY, 0.0, hubX, hubY);
+        assertEquals(hubHeading, hubTx, 3.0, "sim tag tx+ty must aim at hub, not past it");
     }
 }

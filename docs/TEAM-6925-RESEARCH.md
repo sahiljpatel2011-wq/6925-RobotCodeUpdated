@@ -75,7 +75,7 @@ Idle 3000 between volleys. Hold last shot RPM **while feeding**. After the volle
 ## Limelight setup (on the camera)
 
 - Pipeline 0: 2026 REBUILT map, MegaTag2, Light/Medium black level, stream low. Crop hopper/ceiling of **this** robot so onboard Fuel is not a detector target.
-- Pipeline 1: official Fuel B1 neural detector. Hold operator 3 to yaw to the largest detection. Default off.
+- Pipeline 1: official Fuel B1 neural detector exists in code but is not bound on the operator stick (buttons 3 and 5 stay unused, matching original).
 - `SetRobotOrientation` from **Pigeon / field yaw**, never fused pose. Fuse **XY only**.
 
 ## Simulation on this PC

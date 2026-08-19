@@ -4,21 +4,29 @@
 
 package frc.robot.subsystems;
 
+import com.ctre.phoenix6.BaseStatusSignal;
+import com.ctre.phoenix6.StatusSignal;
 import com.ctre.phoenix6.controls.VelocityVoltage;
 import com.ctre.phoenix6.hardware.TalonFX;
 
-import frc.robot.CTREConfigs;
-import frc.robot.Constants.ShooterConstants;
+import edu.wpi.first.units.measure.AngularVelocity;
+import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
+import frc.robot.CTREConfigs;
+import frc.robot.Constants.ShooterConstants;
 
 
 public class ShooterSubsys extends SubsystemBase {
   private final TalonFX fuelShoot = new TalonFX(8, "CANivore");
   private final TalonFX fuelShoot0 = new TalonFX(9, "CANivore");
   private final TalonFX fuelShoot1 = new TalonFX(10, "CANivore");
+
+  private final StatusSignal<AngularVelocity> vel8 = fuelShoot.getVelocity();
+  private final StatusSignal<AngularVelocity> vel9 = fuelShoot0.getVelocity();
+  private final StatusSignal<AngularVelocity> vel10 = fuelShoot1.getVelocity();
 
   public static final double kIdleRPM = ShooterConstants.kIdleRPM;
   private static final double kVelocityToleranceRPM = 300.0;
@@ -31,6 +39,10 @@ public class ShooterSubsys extends SubsystemBase {
     fuelShoot.getConfigurator().apply(CTREConfigs.SHOOTER_CONFIG);
     fuelShoot0.getConfigurator().apply(CTREConfigs.SHOOTER_CONFIG_9);
     fuelShoot1.getConfigurator().apply(CTREConfigs.SHOOTER_CONFIG_10);
+    BaseStatusSignal.setUpdateFrequencyForAll(50.0, vel8, vel9, vel10);
+    fuelShoot.optimizeBusUtilization();
+    fuelShoot0.optimizeBusUtilization();
+    fuelShoot1.optimizeBusUtilization();
     setDefaultCommand(Commands.run(() -> setVelocityRPM(holdRPM), this));
   }
 
@@ -45,6 +57,14 @@ public class ShooterSubsys extends SubsystemBase {
     fuelShoot.setControl(m_velocityRequest.withVelocity(rps));
     fuelShoot0.setControl(m_velocityRequest0.withVelocity(rps));
     fuelShoot1.setControl(m_velocityRequest1.withVelocity(rps));
+    if (RobotBase.isSimulation()) {
+      fuelShoot.getSimState().setSupplyVoltage(12.0);
+      fuelShoot0.getSimState().setSupplyVoltage(12.0);
+      fuelShoot1.getSimState().setSupplyVoltage(12.0);
+      fuelShoot.getSimState().setRotorVelocity(rps);
+      fuelShoot0.getSimState().setRotorVelocity(rps);
+      fuelShoot1.getSimState().setRotorVelocity(rps);
+    }
   }
 
   public void returnToIdle() {
@@ -73,15 +93,15 @@ public class ShooterSubsys extends SubsystemBase {
   }
 
   public double getVelocityRPM8() {
-    return fuelShoot.getVelocity().getValueAsDouble() * 60.0;
+    return vel8.getValueAsDouble() * 60.0;
   }
 
   public double getVelocityRPM9() {
-    return fuelShoot0.getVelocity().getValueAsDouble() * 60.0;
+    return vel9.getValueAsDouble() * 60.0;
   }
 
   public double getVelocityRPM10() {
-    return fuelShoot1.getVelocity().getValueAsDouble() * 60.0;
+    return vel10.getValueAsDouble() * 60.0;
   }
 
   public double getTargetRPM() {
@@ -100,33 +120,54 @@ public class ShooterSubsys extends SubsystemBase {
     return holdRPM > kIdleRPM + 50.0 && !isVelocityWithinTolerance();
   }
 
+  /**
+   * Motor 8 must be in the ±300 RPM band. 9 and 10 must also be in band when
+   * their CAN signal is fresh so a stale column cannot brick "at speed".
+   */
   public boolean isVelocityWithinTolerance() {
     if (isIdleHold() || targetRPM <= 0) {
       return false;
     }
-    return columnInBand(getVelocityRPM8())
-        && columnInBand(getVelocityRPM9())
-        && columnInBand(getVelocityRPM10());
+    if (!columnInBand(getVelocityRPM8())) {
+      return false;
+    }
+    return columnOkIfFresh(vel9, getVelocityRPM9())
+        && columnOkIfFresh(vel10, getVelocityRPM10());
   }
 
-  /** True if every column is at least target-400 RPM (AutoshootFeed gate). */
+  /** True if every live column is at least target-400 RPM (AutoshootFeed gate). */
   public boolean isReadyToFeed() {
     if (isIdleHold() || targetRPM <= 0) {
       return false;
     }
     final double minRpm = targetRPM - kFeedReadyMarginRPM;
-    return getVelocityRPM8() >= minRpm
-        && getVelocityRPM9() >= minRpm
-        && getVelocityRPM10() >= minRpm
-        && isVelocityWithinTolerance();
+    if (getVelocityRPM8() < minRpm) {
+      return false;
+    }
+    if (isFresh(vel9) && getVelocityRPM9() < minRpm) {
+      return false;
+    }
+    if (isFresh(vel10) && getVelocityRPM10() < minRpm) {
+      return false;
+    }
+    return isVelocityWithinTolerance();
   }
 
   private boolean columnInBand(double rpm) {
     return Math.abs(rpm - targetRPM) < kVelocityToleranceRPM;
   }
 
+  private boolean columnOkIfFresh(StatusSignal<AngularVelocity> signal, double rpm) {
+    return !isFresh(signal) || columnInBand(rpm);
+  }
+
+  private static boolean isFresh(StatusSignal<?> signal) {
+    return signal.getStatus().isOK() && signal.getTimestamp().getLatency() < 0.25;
+  }
+
   @Override
   public void periodic() {
+    BaseStatusSignal.refreshAll(vel8, vel9, vel10);
     SmartDashboard.putBoolean("Shooter At Speed", isVelocityWithinTolerance());
     SmartDashboard.putNumber("Shooter RPM", getVelocityRPM8());
     SmartDashboard.putNumber("Shooter RPM Motor 9", getVelocityRPM9());

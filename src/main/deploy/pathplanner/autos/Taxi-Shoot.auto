@@ -5,15 +5,15 @@
     "data": {
       "commands": [
         {
-          "type": "named",
-          "data": {
-            "name": "AdjustedWindUpOnce"
-          }
-        },
-        {
           "type": "path",
           "data": {
             "pathName": "Taxi-Shoot"
+          }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": "AdjustedWindUpOnce"
           }
         },
         {

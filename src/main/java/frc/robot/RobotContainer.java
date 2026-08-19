@@ -22,7 +22,7 @@ package frc.robot;
  *   - A = X-brake
  *   - Right bumper = hub aim + live-table shooter wind-up (keep translating)
  *   - Y = full-field pass aim (trench tags, 15° inward) + 5450 RPM
- *   - Drive supply 35 A — do not raise. SysId is disabled/test only.
+ *   - Drive supply 35 A — do not raise. Back+Y/X and Start+Y/X = SysId.
  *
  * SHOOTER (ShooterSubsys) — 3 independent TalonFX, not followers
  *   - CAN 8 / 9 / 10, VelocityVoltage, Coast
@@ -44,18 +44,23 @@ package frc.robot;
  * LIMELIGHT ("limelight")
  *   - 1.46" behind center, 25.39" up, 26° pitch. Fiducial offset -0.5842 m
  *     (keep until range day). Pipeline 0 AprilTag / MegaTag2 XY-only.
- *   - Pipeline 1 Fuel B1 (hold operator 3). Alliance hub tags only for aim.
+ *     Hub aim uses official hub tags 2–5/8–11 (red) and 18–21/24–27 (blue).
+ *     Pipeline 1 Fuel B1 is code-only (unbound; flags off).
  *
- * OPERATOR (X3D port 1)
+ * OPERATOR (X3D port 1) — same bindings as original configureBindings()
  *   1  = Shoot (feeder + intake bounce) + hold 1/5 drive
  *   2  = Intake oscillate + hold 1/2 drive
- *   3  = Fuel assist (pipeline 1, default flag OFF)
- *   4  = Retract    5 = AutoshootFeed (default OFF)
- *   6  = Deploy     7 = closer hub windup (3350 / 0.0)
+ *   4  = Retract
+ *   6  = Deploy
+ *   7  = closer hub windup (3350 / 0.0)
  *   8  = Pass windup (3500 / 0.75)
- *   9  = Close windup    10 = snap wheels
- *   11 = Test hood       12 = retract oscillate
- *   Hat down = reverse; hat left = exposure tune (disabled only)
+ *   9  = Close windup
+ *   10 = snap wheels
+ *   11 = Test hood
+ *   12 = retract oscillate
+ *   Hat down = reverse jam
+ *   Hat left = Limelight exposure tune
+ *   (3 and 5 are not bound — climber removed)
  *
  * AUTONOMOUS
  *   PathPlanner AutoBuilder. Sequential named commands must finish.
@@ -70,6 +75,7 @@ package frc.robot;
  */
 
 import static edu.wpi.first.units.Units.*;
+import static frc.robot.Constants.ShooterConstants.kDefaultHoodPosition;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
@@ -94,6 +100,7 @@ import frc.robot.subsystems.HoodSubsys;
 import frc.robot.subsystems.IntakeSubsys;
 import frc.robot.subsystems.LimelightSubsys;
 import frc.robot.subsystems.ShooterSubsys;
+import frc.robot.vision.VisionGates;
 
 public class RobotContainer {
     private double MaxSpeed = 1.0 * TunerConstants.kSpeedAt12Volts.in(MetersPerSecond);
@@ -125,13 +132,14 @@ public class RobotContainer {
     private final LimelightSubsys limelight = new LimelightSubsys(
         "limelight",
         () -> drivetrain.getState().Pose,
-        () -> drivetrain.getState().Pose.getRotation().getDegrees()
+        () -> drivetrain.getState().Pose.getRotation().getDegrees(),
+        drivetrain::getGyroYawRateDegreesPerSec
     );
 
     public RobotContainer() {
         RobotCommands.init(shooter, feeder, hood, intake, drivetrain, limelight);
-        configureBindings();
         registerNamedCommands();
+        configureBindings();
         drivetrain.registerTelemetry(logger::telemeterize);
 
         autoChooser = AutoBuilder.buildAutoChooser("M-S");
@@ -153,14 +161,15 @@ public class RobotContainer {
         NamedCommandRegistry.register("AdjustedWindUpOnce", RobotCommands::adjustedWindUpOnce, shooter, hood);
         NamedCommandRegistry.register("IntakeMid", RobotCommands::intakeMid, intake);
         NamedCommandRegistry.register("IntakeFast", RobotCommands::intakeFast, intake);
-        NamedCommandRegistry.register("IntakeFast", RobotCommands::intakeFast, intake);
         NamedCommandRegistry.register("StopIntake", RobotCommands::stopIntake, intake);
         NamedCommandRegistry.register("intakeStop", RobotCommands::stopIntake, intake);
-        NamedCommandRegistry.register("intakeDeploy", () -> intake.goToPositionCommand(-14.5), intake);
-        NamedCommandRegistry.register("intakeDeploy", () -> intake.goToPositionCommand(-14.5), intake);
+        NamedCommandRegistry.register(
+            "intakeDeploy",
+            () -> intake.goToPositionSlowCommand(-14.5, 0.3).withTimeout(2.5),
+            intake);
         NamedCommandRegistry.register("intakeBounce", Commands::none);
-        NamedCommandRegistry.register("hoodReset", () -> Commands.runOnce(() -> hood.setPosition(0)), hood);
-        NamedCommandRegistry.register("hoodReset", () -> Commands.runOnce(() -> hood.setPosition(0)), hood);
+        NamedCommandRegistry.register("hoodReset",
+            () -> Commands.runOnce(() -> hood.setPosition(kDefaultHoodPosition), hood));
 
         NamedCommandRegistry.registerNone("jolt");
         NamedCommandRegistry.registerNone("ClimbUp");
@@ -168,32 +177,7 @@ public class RobotContainer {
         NamedCommandRegistry.registerNone("climbDown");
         NamedCommandRegistry.registerNone("StopClimber");
         NamedCommandRegistry.registerNone("hopperDeploy");
-        NamedCommandRegistry.registerNone("hopperDeploy");
         NamedCommandRegistry.registerNone("VisionUpdate");
-    }
-
-    private double slewedForward() {
-        double leftY = joystick.getLeftY();
-        double leftX = joystick.getLeftX();
-        boolean translationDead = Math.abs(leftY) < 0.05 && Math.abs(leftX) < 0.05;
-        if (translationDead) {
-            xLimiter.reset(0);
-            yLimiter.reset(0);
-            return 0;
-        }
-        double squaredY = -Math.copySign(leftY * leftY, leftY);
-        return xLimiter.calculate(squaredY) * MaxSpeed * drivetrain.getCurrentSpeedMulti();
-    }
-
-    private double slewedStrafe() {
-        double leftY = joystick.getLeftY();
-        double leftX = joystick.getLeftX();
-        boolean translationDead = Math.abs(leftY) < 0.05 && Math.abs(leftX) < 0.05;
-        if (translationDead) {
-            return 0;
-        }
-        double squaredX = -Math.copySign(leftX * leftX, leftX);
-        return yLimiter.calculate(squaredX) * MaxSpeed * drivetrain.getCurrentSpeedMulti();
     }
 
     private void configureBindings() {
@@ -212,9 +196,8 @@ public class RobotContainer {
                 double sqrtRot = -Math.copySign(Math.pow(Math.abs(rightX), 1.5), rightX);
                 double slewedY = translationDead ? 0 : xLimiter.calculate(squaredY);
                 double slewedX = translationDead ? 0 : yLimiter.calculate(squaredX);
-                double transScale = shooter.isSpooling() ? 0.75 : 1.0;
-                return drive.withVelocityX(slewedY * MaxSpeed * drivetrain.getCurrentSpeedMulti() * transScale)
-                    .withVelocityY(slewedX * MaxSpeed * drivetrain.getCurrentSpeedMulti() * transScale)
+                return drive.withVelocityX(slewedY * MaxSpeed * drivetrain.getCurrentSpeedMulti())
+                    .withVelocityY(slewedX * MaxSpeed * drivetrain.getCurrentSpeedMulti())
                     .withRotationalRate(sqrtRot * MaxAngularRate);
             })
         );
@@ -231,11 +214,10 @@ public class RobotContainer {
         joystick.a().whileTrue(drivetrain.applyRequest(() -> brake));
         joystick.b().onTrue(drivetrain.toggleSpeedMulti(1.0));
 
-        var sysIdMode = RobotModeTriggers.disabled().or(RobotModeTriggers.test());
-        joystick.back().and(joystick.y()).and(sysIdMode).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
-        joystick.back().and(joystick.x()).and(sysIdMode).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
-        joystick.start().and(joystick.y()).and(sysIdMode).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
-        joystick.start().and(joystick.x()).and(sysIdMode).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
+        joystick.back().and(joystick.y()).whileTrue(drivetrain.sysIdDynamic(Direction.kForward));
+        joystick.back().and(joystick.x()).whileTrue(drivetrain.sysIdDynamic(Direction.kReverse));
+        joystick.start().and(joystick.y()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kForward));
+        joystick.start().and(joystick.x()).whileTrue(drivetrain.sysIdQuasistatic(Direction.kReverse));
 
         joystick.leftBumper().onTrue(drivetrain.runOnce(drivetrain::seedFieldCentric));
 
@@ -245,10 +227,18 @@ public class RobotContainer {
         joystick.povRight().whileTrue(intake.creepRotateCommand(1));
 
         joystick.rightBumper().whileTrue(
-            RobotCommands.aimAndWindUp(this::slewedForward, this::slewedStrafe, MaxSpeed)
+            RobotCommands.aimAndWindUp(
+                () -> -joystick.getLeftY() * MaxSpeed,
+                () -> -joystick.getLeftX() * MaxSpeed,
+                MaxSpeed
+            )
         );
         joystick.y().whileTrue(
-            RobotCommands.aimAndPassFullField(this::slewedForward, this::slewedStrafe, MaxSpeed)
+            RobotCommands.aimAndPassFullField(
+                () -> -joystick.getLeftY() * MaxSpeed,
+                () -> -joystick.getLeftX() * MaxSpeed,
+                MaxSpeed
+            )
         );
 
         operator.button(1).whileTrue(RobotCommands.Shoot());
@@ -264,23 +254,18 @@ public class RobotContainer {
         operator.button(10).whileTrue(drivetrain.applyRequest(() ->
             point.withModuleDirection(new Rotation2d(0))));
         operator.pov(180).whileTrue(RobotCommands.reverseAll());
-        operator.pov(270).and(RobotModeTriggers.disabled()).onTrue(RobotCommands.autoTuneExposure());
+        operator.pov(270).onTrue(RobotCommands.autoTuneExposure());
         operator.button(8).whileTrue(RobotCommands.windUpPass());
-        operator.button(3).whileTrue(
-            RobotCommands.fuelAssist(this::slewedForward, this::slewedStrafe, MaxSpeed)
-        );
-        operator.button(5).whileTrue(RobotCommands.autoshootFeed(joystick.getHID()));
     }
 
     public Command getAutonomousCommand() {
-        return autoChooser.getSelected();
+        final Command selected = autoChooser.getSelected();
+        return selected != null ? selected : Commands.none();
     }
 
     public void updateDashboard() {
-        Command selected = autoChooser.getSelected();
-        String name = selected != null ? selected.getName() : "None";
-        if (!name.equals(cachedAutoName)) {
-            cachedAutoName = name;
+        if (autoChooser.getSelected() != null) {
+            cachedAutoName = autoChooser.getSelected().getName();
         }
         SmartDashboard.putString("Selected Auto", cachedAutoName);
         SmartDashboard.putBoolean("VisionSeeded", visionSeeded);
@@ -305,8 +290,9 @@ public class RobotContainer {
             final double maxJump = DriverStation.isAutonomous()
                 ? kMaxVisionJumpAutoMeters
                 : kMaxVisionJumpTeleopMeters;
-            final double yawRate = Math.abs(drivetrain.getPigeon2().getAngularVelocityZWorld().getValueAsDouble());
-            if (jump > maxJump || yawRate > kMaxYawRateDegPerSec) {
+            final double yawRate = Math.abs(drivetrain.getGyroYawRateDegreesPerSec());
+            if (!VisionGates.allowVisionJump(currentPose.getX(), currentPose.getY(), jump, maxJump)
+                || yawRate > kMaxYawRateDegPerSec) {
                 return;
             }
             drivetrain.addVisionMeasurement(
@@ -317,19 +303,21 @@ public class RobotContainer {
         });
     }
 
+    public void prepareVisionSeed() {
+        visionSeeded = false;
+    }
+
     public void seedPoseFromVision() {
-        if (limelight == null) {
+        if (limelight == null || visionSeeded) {
             return;
         }
-        final Pose2d currentPose = drivetrain.getState().Pose;
         limelight.getMegaTag1Measurement().ifPresent(measurement -> {
-            final double jump = currentPose.getTranslation()
-                .getDistance(measurement.poseEstimate.pose.getTranslation());
-            if (jump < kMaxVisionJumpTeleopMeters || currentPose.getTranslation().getNorm() < 0.01 || !visionSeeded) {
-                drivetrain.resetPose(measurement.poseEstimate.pose);
-                visionSeeded = true;
-                SmartDashboard.putBoolean("VisionSeeded", true);
+            if (measurement.poseEstimate.tagCount < 1) {
+                return;
             }
+            drivetrain.resetPose(measurement.poseEstimate.pose);
+            visionSeeded = true;
+            SmartDashboard.putBoolean("VisionSeeded", true);
         });
     }
 }

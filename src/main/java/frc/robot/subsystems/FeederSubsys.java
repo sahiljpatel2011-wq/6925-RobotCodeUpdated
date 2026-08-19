@@ -14,6 +14,7 @@ import frc.robot.CTREConfigs;
 public class FeederSubsys extends SubsystemBase {
   private final TalonFX feeder0 = new TalonFX(51, "CANivore");
   private final TalonFX fuelFeed = new TalonFX(11, "CANivore");
+  private FeederSpeed commanded = FeederSpeed.OFF;
 
   public FeederSubsys() {
     feeder0.getConfigurator().apply(CTREConfigs.FEEDER_CONFIG);
@@ -21,12 +22,14 @@ public class FeederSubsys extends SubsystemBase {
   }
 
   public void setSpeed(FeederSpeed speed) {
+    commanded = speed;
     feeder0.set(speed.value);
     fuelFeed.set(speed.fuelFeedValue);
   }
 
+  /** Commanded feed, not TalonFX.get() — Phoenix 6 duty-cycle get() is not reliable here. */
   public boolean isFeeding() {
-    return feeder0.get() != 0.0 || fuelFeed.get() != 0.0;
+    return commanded == FeederSpeed.FEED_FAST || commanded == FeederSpeed.FEED_SLOW;
   }
 
   public Command setSpeedCommand(FeederSpeed speed) {
@@ -35,7 +38,7 @@ public class FeederSubsys extends SubsystemBase {
 
   @Override
   public void periodic() {
-    
+    SmartDashboard.putBoolean("Feeder Running", isFeeding());
   }
 
   public enum FeederSpeed {

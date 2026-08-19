@@ -3,25 +3,41 @@
   "waypoints": [
     {
       "anchor": {
-        "x": 3.90,
-        "y": 4.04
+        "x": 0.70,
+        "y": 6.85
       },
       "prevControl": null,
       "nextControl": {
-        "x": 4.15,
-        "y": 4.04
+        "x": 1.15,
+        "y": 6.35
       },
       "isLocked": false,
       "linkedName": null
     },
     {
       "anchor": {
-        "x": 2.80,
+        "x": 1.85,
+        "y": 5.25
+      },
+      "prevControl": {
+        "x": 1.40,
+        "y": 5.80
+      },
+      "nextControl": {
+        "x": 2.25,
+        "y": 4.75
+      },
+      "isLocked": false,
+      "linkedName": null
+    },
+    {
+      "anchor": {
+        "x": 2.72,
         "y": 4.04
       },
       "prevControl": {
-        "x": 3.05,
-        "y": 4.04
+        "x": 2.40,
+        "y": 4.45
       },
       "nextControl": null,
       "isLocked": false,
@@ -37,16 +53,16 @@
         "y": 4.05
       },
       "rotationOffset": 0.0,
-      "minWaypointRelativePos": 0.0,
-      "maxWaypointRelativePos": 1.0,
-      "name": "Point towards Target"
+      "minWaypointRelativePos": 1.15,
+      "maxWaypointRelativePos": 2.0,
+      "name": "Point towards Hub"
     }
   ],
   "eventMarkers": [
     {
       "name": "AdjustedWindUp",
-      "waypointRelativePos": 0,
-      "endWaypointRelativePos": 1.0,
+      "waypointRelativePos": 1.15,
+      "endWaypointRelativePos": 2.0,
       "command": null
     }
   ],
@@ -63,7 +79,7 @@
     "rotation": 0.0
   },
   "reversed": false,
-  "folder": null,
+  "folder": "Hub-NoBump",
   "idealStartingState": {
     "velocity": 0,
     "rotation": 0.0

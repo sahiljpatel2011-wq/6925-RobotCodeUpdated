@@ -1,5 +1,6 @@
 package frc.robot.vision;
 
+import java.util.Optional;
 import java.util.OptionalDouble;
 
 /**
@@ -98,8 +99,77 @@ public final class HubAimMath {
     }
 
     /**
-     * Heading error (degrees) from robot pose to a hub XY, robot-relative "tx"
-     * (positive means hub is to the right, matching Limelight tx).
+     * Area-weighted hub aim across several valid tags. Larger ta (closer / more
+     * pixels) pulls tx and range more than a distant tag.
+     */
+    public static Optional<WeightedHubAim> areaWeightedHubAim(
+        int[] ids,
+        double[] txDegrees,
+        double[] tyDegrees,
+        double[] taPercent
+    ) {
+        if (ids == null || txDegrees == null || tyDegrees == null || taPercent == null) {
+            return Optional.empty();
+        }
+        final int n = Math.min(Math.min(ids.length, txDegrees.length), Math.min(tyDegrees.length, taPercent.length));
+        double weightTx = 0.0;
+        double weightRange = 0.0;
+        double txWeight = 0.0;
+        double rangeWeight = 0.0;
+        int bestId = 0;
+        double bestTa = -1.0;
+        int count = 0;
+        for (int i = 0; i < n; i++) {
+            if (!isHubTag(ids[i]) || !Double.isFinite(taPercent[i]) || taPercent[i] <= 0.0) {
+                continue;
+            }
+            final OptionalDouble aimTx = hubAimTxDegrees(ids[i], txDegrees[i], tyDegrees[i]);
+            final OptionalDouble range = hubRangeInches(ids[i], txDegrees[i], tyDegrees[i]);
+            final double usedTx = aimTx.isPresent() ? aimTx.getAsDouble() : txDegrees[i];
+            if (!Double.isFinite(usedTx)) {
+                continue;
+            }
+            weightTx += usedTx * taPercent[i];
+            txWeight += taPercent[i];
+            if (range.isPresent()) {
+                weightRange += range.getAsDouble() * taPercent[i];
+                rangeWeight += taPercent[i];
+            }
+            count++;
+            if (taPercent[i] > bestTa) {
+                bestTa = taPercent[i];
+                bestId = ids[i];
+            }
+        }
+        if (count == 0 || txWeight <= 0.0) {
+            return Optional.empty();
+        }
+        final double avgRange = rangeWeight > 0.0 ? weightRange / rangeWeight : Double.NaN;
+        return Optional.of(new WeightedHubAim(weightTx / txWeight, avgRange, bestId, count));
+    }
+
+    /** Center hub tag on the alliance-station face (what 6925 sees when shooting). */
+    public static int preferredHubTagId(boolean isBlue) {
+        return isBlue ? 26 : 10;
+    }
+
+    public static final class WeightedHubAim {
+        public final double txDegrees;
+        public final double rangeInches;
+        public final int bestId;
+        public final int count;
+
+        public WeightedHubAim(double txDegrees, double rangeInches, int bestId, int count) {
+            this.txDegrees = txDegrees;
+            this.rangeInches = rangeInches;
+            this.bestId = bestId;
+            this.count = count;
+        }
+    }
+
+    /**
+     * Limelight-style tx (degrees) from robot pose to a hub XY.
+     * Positive means the hub is to the right of the nose (same as Limelight tx).
      */
     public static double poseAimTxDegrees(
         double robotXMeters,
@@ -110,15 +180,12 @@ public final class HubAimMath {
     ) {
         final double dx = hubXMeters - robotXMeters;
         final double dy = hubYMeters - robotYMeters;
-        final double desired = Math.atan2(dy, dx);
-        double error = desired - robotHeadingRadians;
-        while (error > Math.PI) {
-            error -= 2.0 * Math.PI;
-        }
-        while (error < -Math.PI) {
-            error += 2.0 * Math.PI;
-        }
-        return Math.toDegrees(error);
+        final double cos = Math.cos(robotHeadingRadians);
+        final double sin = Math.sin(robotHeadingRadians);
+        // WPILib robot frame: +X forward, +Y left. Limelight +tx is right.
+        final double forward = dx * cos + dy * sin;
+        final double left = -dx * sin + dy * cos;
+        return Math.toDegrees(Math.atan2(-left, forward));
     }
 
     public static double poseRangeInches(
@@ -130,6 +197,37 @@ public final class HubAimMath {
         final double dx = hubXMeters - robotXMeters;
         final double dy = hubYMeters - robotYMeters;
         return Math.hypot(dx, dy) / 0.0254;
+    }
+
+    /** Limelight ty that a hub tag at this ground range would report. */
+    public static double tyDegreesFromCameraToTagInches(double cameraToTagInches) {
+        if (cameraToTagInches <= 0.0) {
+            return 0.0;
+        }
+        return Math.toDegrees(Math.atan((kHubTagHeightInches - kCameraHeightInches) / cameraToTagInches))
+            - kCameraMountAngleDegrees;
+    }
+
+    /**
+     * Hub-tag XY: 23.5 in from hub center toward the robot (tag face the camera sees).
+     */
+    public static double[] tagXyMeters(
+        double robotXMeters,
+        double robotYMeters,
+        double hubXMeters,
+        double hubYMeters
+    ) {
+        final double dx = robotXMeters - hubXMeters;
+        final double dy = robotYMeters - hubYMeters;
+        final double dist = Math.hypot(dx, dy);
+        if (dist < 1e-6) {
+            return new double[] {hubXMeters, hubYMeters};
+        }
+        final double offsetM = kHubCenterOffsetInches * 0.0254;
+        return new double[] {
+            hubXMeters + dx / dist * offsetM,
+            hubYMeters + dy / dist * offsetM
+        };
     }
 
     /**

@@ -10,10 +10,12 @@ import java.util.function.DoubleSupplier;
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.units.measure.Distance;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.GenericHID;
 import edu.wpi.first.wpilibj.RobotController;
 import edu.wpi.first.wpilibj.Timer;
@@ -32,7 +34,6 @@ import frc.robot.vision.HubAimMath;
 import frc.robot.vision.ShotTable;
 import frc.robot.vision.ShotTable.Shot;
 import frc.robot.LimelightHelpers.RawDetection;
-import frc.robot.LimelightHelpers.RawFiducial;
 
 public final class RobotCommands {
     private static ShooterSubsys shooterSubsys;
@@ -156,28 +157,21 @@ public final class RobotCommands {
     public static Command Shoot() {
         final double oscillationMotorRotations = (60.0 / 360.0) * 8.0;
         final double period = 0.8;
-        final double[] state = {0, 0};
+        final double[] state = {Double.NaN, 0};
         return Commands.runEnd(
             () -> {
                 feederSubsys.setSpeed(FeederSpeed.FEED_FAST);
                 intakeSubsys.setSpeed(IntakeSpeed.INTAKE_FAST);
-                if (state[0] == 0) {
-                    state[0] = Timer.getFPGATimestamp();
-                    state[1] = intakeSubsys.getRotatorPosition();
-                }
-                double elapsed = Timer.getFPGATimestamp() - state[0];
-                boolean goUp = ((int)(elapsed / (period / 2.0)) % 2 == 0);
-                double target = goUp ? state[1] + oscillationMotorRotations : state[1];
-                intakeSubsys.setRotatorOscillate(target);
+                tickOscillate(state, oscillationMotorRotations, period);
             },
             () -> {
                 feederSubsys.setSpeed(FeederSpeed.OFF);
                 intakeSubsys.setSpeed(IntakeSpeed.OFF);
-                intakeSubsys.setRotatorTarget(state[1]);
-                if (!isAimHeld()) {
+                restoreOscillate(state);
+                // Keep shot RPM in auto so path-event "shoot" does not idle before autoShoot.
+                if (!isAimHeld() && !DriverStation.isAutonomous()) {
                     shooterSubsys.returnToIdle();
                 }
-                state[0] = 0;
             },
             feederSubsys, intakeSubsys
         );
@@ -186,26 +180,18 @@ public final class RobotCommands {
     public static Command autoShoot(double seconds) {
         final double oscillationMotorRotations = (60.0 / 360.0) * 8.0;
         final double period = 0.8;
-        final double[] state = {0, 0};
+        final double[] state = {Double.NaN, 0};
         return Commands.runEnd(
             () -> {
                 feederSubsys.setSpeed(FeederSpeed.FEED_FAST);
                 intakeSubsys.setSpeed(IntakeSpeed.INTAKE_FAST);
-                if (state[0] == 0) {
-                    state[0] = Timer.getFPGATimestamp();
-                    state[1] = intakeSubsys.getRotatorPosition();
-                }
-                double elapsed = Timer.getFPGATimestamp() - state[0];
-                boolean goUp = ((int)(elapsed / (period / 2.0)) % 2 == 0);
-                double target = goUp ? state[1] + oscillationMotorRotations : state[1];
-                intakeSubsys.setRotatorOscillate(target);
+                tickOscillate(state, oscillationMotorRotations, period);
             },
             () -> {
                 feederSubsys.setSpeed(FeederSpeed.OFF);
                 intakeSubsys.setSpeed(IntakeSpeed.OFF);
-                intakeSubsys.setRotatorTarget(state[1] != 0 ? state[1] : -14.5);
+                restoreOscillate(state, -14.5);
                 shooterSubsys.returnToIdle();
-                state[0] = 0;
             },
             feederSubsys, intakeSubsys
         ).withTimeout(seconds);
@@ -251,11 +237,10 @@ public final class RobotCommands {
 
         return Commands.runEnd(() -> {
                 final AimSnapshot aim = computeHubAim();
-                final double rotationRate = pdRotation(-aim.tx);
-                final double transScale = shooterSubsys.isSpooling() ? 0.75 : 1.0;
+                final double rotationRate = pdRotation(aim.tx);
                 drivetrain.setControl(aimDrive
-                    .withVelocityX(velocityX.getAsDouble() * transScale)
-                    .withVelocityY(velocityY.getAsDouble() * transScale)
+                    .withVelocityX(velocityX.getAsDouble())
+                    .withVelocityY(velocityY.getAsDouble())
                     .withRotationalRate(rotationRate));
 
                 final Shot shot = ShotTable.get(aim.distance);
@@ -285,13 +270,12 @@ public final class RobotCommands {
                 if (LimelightHelpers.getTV("limelight") && HubAimMath.isTrenchTag(tagID)) {
                     final double rawTx = LimelightHelpers.getTX("limelight");
                     final double correctedTx = rawTx + HubAimMath.passAimOffsetDegrees(tagID);
-                    rotationRate = pdRotation(-correctedTx);
+                    rotationRate = pdRotation(correctedTx);
                 }
 
-                final double transScale = shooterSubsys.isSpooling() ? 0.75 : 1.0;
                 drivetrain.setControl(passDrive
-                    .withVelocityX(velocityX.getAsDouble() * transScale)
-                    .withVelocityY(velocityY.getAsDouble() * transScale)
+                    .withVelocityX(velocityX.getAsDouble())
+                    .withVelocityY(velocityY.getAsDouble())
                     .withRotationalRate(rotationRate));
             },
             () -> {
@@ -318,18 +302,14 @@ public final class RobotCommands {
                     return;
                 }
                 limelightSubsys.setPipeline(1);
-                double bestTa = -1.0;
-                double tx = 0.0;
-                for (RawDetection detection : LimelightHelpers.getRawDetections("limelight")) {
-                    if (detection.ta > bestTa) {
-                        bestTa = detection.ta;
-                        tx = detection.txnc;
-                    }
-                }
+                final Optional<RawDetection> fuel = limelightSubsys.bestFuelDetection();
+                final double rotationRate = fuel
+                    .map(detection -> pdRotation(detection.txnc))
+                    .orElse(0.0);
                 drivetrain.setControl(assistDrive
                     .withVelocityX(velocityX.getAsDouble())
                     .withVelocityY(velocityY.getAsDouble())
-                    .withRotationalRate(bestTa > 0 ? pdRotation(-tx) : 0));
+                    .withRotationalRate(rotationRate));
             },
             () -> limelightSubsys.setPipeline(0),
             drivetrain
@@ -339,7 +319,7 @@ public final class RobotCommands {
     public static Command autoshootFeed(GenericHID rumbleHid) {
         final double oscillationMotorRotations = (60.0 / 360.0) * 8.0;
         final double period = 0.8;
-        final double[] state = {0, 0};
+        final double[] state = {Double.NaN, 0};
         return Commands.runEnd(
             () -> {
                 if (!FeatureFlags.autoshootFeed()) {
@@ -351,13 +331,7 @@ public final class RobotCommands {
                     rumbleHid.setRumble(GenericHID.RumbleType.kBothRumble, 0.4);
                     feederSubsys.setSpeed(FeederSpeed.FEED_FAST);
                     intakeSubsys.setSpeed(IntakeSpeed.INTAKE_FAST);
-                    if (state[0] == 0) {
-                        state[0] = Timer.getFPGATimestamp();
-                        state[1] = intakeSubsys.getRotatorPosition();
-                    }
-                    double elapsed = Timer.getFPGATimestamp() - state[0];
-                    boolean goUp = ((int)(elapsed / (period / 2.0)) % 2 == 0);
-                    intakeSubsys.setRotatorOscillate(goUp ? state[1] + oscillationMotorRotations : state[1]);
+                    tickOscillate(state, oscillationMotorRotations, period);
                 } else {
                     rumbleHid.setRumble(GenericHID.RumbleType.kBothRumble, 0);
                     feederSubsys.setSpeed(FeederSpeed.OFF);
@@ -368,11 +342,10 @@ public final class RobotCommands {
                 rumbleHid.setRumble(GenericHID.RumbleType.kBothRumble, 0);
                 feederSubsys.setSpeed(FeederSpeed.OFF);
                 intakeSubsys.setSpeed(IntakeSpeed.OFF);
-                intakeSubsys.setRotatorTarget(state[1]);
-                if (!isAimHeld()) {
+                restoreOscillate(state);
+                if (!isAimHeld() && !DriverStation.isAutonomous()) {
                     shooterSubsys.returnToIdle();
                 }
-                state[0] = 0;
             },
             feederSubsys, intakeSubsys
         );
@@ -405,50 +378,23 @@ public final class RobotCommands {
     }
 
     public static Command adjustedWindUp() {
-        return Commands.run(() -> {
-            if (!Landmarks.isAllianceKnown()) {
-                return;
-            }
-            final Distance distance = getPredictedDistanceToTarget();
-            final Shot shot = ShotTable.get(distance);
-            shooterSubsys.setVelocityRPM(shot.shooterRPM);
-            hoodSubsys.setPosition(shot.hoodPosition);
-            SmartDashboard.putNumber("Distance to Target (inches)", distance.in(Inches));
-            SmartDashboard.putNumber("Target RPM", shot.shooterRPM);
-            SmartDashboard.putNumber("Target Hood Position", shot.hoodPosition);
-        }, shooterSubsys, hoodSubsys);
+        return Commands.run(() -> applyTableShot(getPredictedDistanceToTarget()), shooterSubsys, hoodSubsys);
     }
 
     public static Command adjustedShootWhileMoving() {
         return Commands.sequence(
-            Commands.run(() -> {
-                final Distance distance = getPredictedDistanceToTarget();
-                final Shot shot = ShotTable.get(distance);
-                shooterSubsys.setVelocityRPM(shot.shooterRPM);
-                hoodSubsys.setPosition(shot.hoodPosition);
-            }, shooterSubsys, hoodSubsys)
+            Commands.run(() -> applyTableShot(getPredictedDistanceToTarget()), shooterSubsys, hoodSubsys)
             .until(shooterSubsys::isVelocityWithinTolerance)
             .withTimeout(2.0),
             Commands.run(() -> {
-                final Distance distance = getPredictedDistanceToTarget();
-                final Shot shot = ShotTable.get(distance);
-                shooterSubsys.setVelocityRPM(shot.shooterRPM);
-                hoodSubsys.setPosition(shot.hoodPosition);
+                applyTableShot(getPredictedDistanceToTarget());
                 feederSubsys.setSpeed(FeederSpeed.FEED_FAST);
             }, shooterSubsys, hoodSubsys, feederSubsys)
-        );
+        ).finallyDo(() -> feederSubsys.setSpeed(FeederSpeed.OFF));
     }
 
     public static Command adjustedWindUpOnce() {
-        return Commands.runOnce(() -> {
-            if (!Landmarks.isAllianceKnown()) {
-                return;
-            }
-            final Distance distance = getDistanceToTarget();
-            final Shot shot = ShotTable.get(distance);
-            shooterSubsys.setVelocityRPM(shot.shooterRPM);
-            hoodSubsys.setPosition(shot.hoodPosition);
-        }, shooterSubsys, hoodSubsys)
+        return Commands.runOnce(() -> applyTableShot(getDistanceToTarget()), shooterSubsys, hoodSubsys)
         .andThen(Commands.waitUntil(shooterSubsys::isVelocityWithinTolerance).withTimeout(2.0));
     }
 
@@ -494,7 +440,9 @@ public final class RobotCommands {
         SmartDashboard.putNumber("Shooter RPM 10", shooterSubsys.getVelocityRPM10());
         SmartDashboard.putNumber("LL Pipeline", limelightSubsys.getPipelineIndex());
         SmartDashboard.putString("Shooter Mode", shooterMode());
-        SmartDashboard.putBoolean("On Target", Math.abs(lastTx) < 2.0);
+        SmartDashboard.putBoolean("On Target", Timer.getFPGATimestamp() - lastTxTime < 0.15 && Math.abs(lastTx) < 2.0);
+        SmartDashboard.putNumber("Hood Position", hoodSubsys.getPosition());
+        SmartDashboard.putNumber("Hood Angle (deg)", hoodSubsys.getAngleDegrees());
     }
 
     private static String shooterMode() {
@@ -514,30 +462,68 @@ public final class RobotCommands {
         return lastMode;
     }
 
+    private static void applyTableShot(Distance distance) {
+        final Shot shot = ShotTable.get(distance);
+        shooterSubsys.setVelocityRPM(shot.shooterRPM);
+        hoodSubsys.setPosition(shot.hoodPosition);
+        SmartDashboard.putNumber("Distance to Target (inches)", distance.in(Inches));
+        SmartDashboard.putNumber("Target RPM", shot.shooterRPM);
+        SmartDashboard.putNumber("Target Hood Position", shot.hoodPosition);
+    }
+
+    private static void tickOscillate(double[] state, double amplitudeRot, double period) {
+        if (Double.isNaN(state[0])) {
+            state[0] = Timer.getFPGATimestamp();
+            state[1] = intakeSubsys.getRotatorPosition();
+        }
+        final double elapsed = Timer.getFPGATimestamp() - state[0];
+        final boolean goUp = ((int) (elapsed / (period / 2.0)) % 2 == 0);
+        intakeSubsys.setRotatorOscillate(goUp ? state[1] + amplitudeRot : state[1]);
+    }
+
+    private static void restoreOscillate(double[] state) {
+        restoreOscillate(state, Double.NaN);
+    }
+
+    private static void restoreOscillate(double[] state, double fallback) {
+        if (!Double.isNaN(state[0])) {
+            intakeSubsys.setRotatorTarget(state[1]);
+        } else if (!Double.isNaN(fallback)) {
+            intakeSubsys.setRotatorTarget(fallback);
+        }
+        state[0] = Double.NaN;
+    }
+
     private static boolean isAimHeld() {
         return shooterSubsys.getCurrentCommand() != null
             && shooterSubsys.getCurrentCommand() != shooterSubsys.getDefaultCommand();
     }
 
-    private static double pdRotation(double txNegated) {
-        final double tx = -txNegated;
+    private static final double kMaxAimOmega = 1.5 * 2.0 * Math.PI;
+
+    /** @param tx Limelight-style degrees (positive = target to the right). */
+    private static double pdRotation(double tx) {
         final double now = Timer.getFPGATimestamp();
         final double dt = now - lastTxTime;
-        final double dTx = dt > 1e-3 ? (tx - lastTx) / dt : 0.0;
+        final double dTx = dt > 1e-3 && dt < 0.2 ? (tx - lastTx) / dt : 0.0;
         lastTx = tx;
         lastTxTime = now;
-        return -tx * kAimP - dTx * kAimD;
+        return MathUtil.clamp(-tx * kAimP - dTx * kAimD, -kMaxAimOmega, kMaxAimOmega);
     }
 
     private static AimSnapshot computeHubAim() {
-        final Optional<RawFiducial> hubTag = limelightSubsys.bestHubFiducial();
-        if (hubTag.isPresent()) {
-            final RawFiducial tag = hubTag.get();
-            final var aimTx = HubAimMath.hubAimTxDegrees(tag.id, tag.txnc, tag.tync);
-            final var range = HubAimMath.hubRangeInches(tag.id, tag.txnc, tag.tync);
-            if (aimTx.isPresent() && range.isPresent()) {
-                return new AimSnapshot(tag.id, aimTx.getAsDouble() + kAimOffsetDegrees, Inches.of(range.getAsDouble()), true);
-            }
+        final Optional<HubAimMath.WeightedHubAim> hubAim = limelightSubsys.weightedHubAim();
+        if (hubAim.isPresent()) {
+            final HubAimMath.WeightedHubAim aim = hubAim.get();
+            final Distance distance = Double.isFinite(aim.rangeInches)
+                ? Inches.of(aim.rangeInches)
+                : getPredictedDistanceToTarget();
+            return new AimSnapshot(
+                aim.bestId,
+                aim.txDegrees + kAimOffsetDegrees,
+                distance,
+                true
+            );
         }
         final Pose2d pose = drivetrain.getState().Pose;
         final Optional<Translation2d> hub = Landmarks.targetPositionOptional();

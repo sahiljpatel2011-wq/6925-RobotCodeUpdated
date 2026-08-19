@@ -4,9 +4,12 @@
 
 package frc.robot.subsystems;
 
+import com.ctre.phoenix6.BaseStatusSignal;
+import com.ctre.phoenix6.StatusSignal;
 import com.ctre.phoenix6.controls.PositionVoltage;
 import com.ctre.phoenix6.hardware.TalonFX;
 import frc.robot.CTREConfigs;
+import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
@@ -17,6 +20,7 @@ public class IntakeSubsys extends SubsystemBase {
   /** Creates a new Intake. */
   private final TalonFX intake = new TalonFX(45, "CANivore");
   private final TalonFX intakeRotator = new TalonFX(50, "CANivore");
+  private final StatusSignal<Angle> rotatorPosition;
   private final PositionVoltage rotatorPositionRequest = new PositionVoltage(0); // Slot0 = gentle
   private final PositionVoltage rotatorOscillateRequest = new PositionVoltage(0).withSlot(1); // Slot1 = snappy
 
@@ -25,7 +29,9 @@ public class IntakeSubsys extends SubsystemBase {
   public IntakeSubsys() {
     intake.getConfigurator().apply(CTREConfigs.INTAKE_CONFIG);
     intakeRotator.getConfigurator().apply(CTREConfigs.INTAKE_ROTATOR_CONFIG);
-    rotatorTargetPosition = intakeRotator.getPosition().getValueAsDouble();
+    rotatorPosition = intakeRotator.getPosition();
+    rotatorPosition.setUpdateFrequency(50);
+    rotatorTargetPosition = rotatorPosition.getValueAsDouble();
     setDefaultCommand(holdPositionCommand());
   }
 
@@ -45,7 +51,7 @@ public class IntakeSubsys extends SubsystemBase {
   }
 
   public double getRotatorPosition() {
-    return intakeRotator.getPosition().getValueAsDouble();
+    return rotatorPosition.getValueAsDouble();
   }
 
   public void setRotatorOscillate(double position) {
@@ -58,83 +64,86 @@ public class IntakeSubsys extends SubsystemBase {
 
   /** Runs the intake roller and oscillates the rotator to dislodge balls. Hold to run.
    *  The rotator bounces between the deployed position and slightly above it. */
-  public Command intakeWithOscillateCommand(IntakeSpeed speed) {
-    // Oscillation range: 15° of output above deployed position
-    final double oscillationMotorRotations = (11.5 / 360.0) * 8.0;
-    final double[] state = {0, 0}; // [startTime, deployedPosition]
-    return this.runEnd(
-      () -> {
-        intake.set(speed.value);
-        if (state[0] == 0) {
-          state[0] = Timer.getFPGATimestamp();
-          state[1] = intakeRotator.getPosition().getValueAsDouble(); // capture deployed position
-        }
-        double elapsed = Timer.getFPGATimestamp() - state[0];
-        // Alternate between deployed position and slightly above every 0.10s
-        boolean goUp = ((int)(elapsed / 0.10) % 2 == 0);
-        double target = goUp ? state[1] + oscillationMotorRotations : state[1];
-        intakeRotator.setControl(rotatorOscillateRequest.withPosition(target));
-      },
-      () -> {
-        intake.set(0);
-        rotatorTargetPosition = state[1];
-        intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
-        state[0] = 0;
-      }
-    );
-  }
+    public Command intakeWithOscillateCommand(IntakeSpeed speed) {
+        // Oscillation range: 15° of output above deployed position
+        final double oscillationMotorRotations = (11.5 / 360.0) * 8.0;
+        final double[] state = {Double.NaN, 0}; // [startTime, deployedPosition]
+        return this.runEnd(
+          () -> {
+            intake.set(speed.value);
+            if (Double.isNaN(state[0])) {
+              state[0] = Timer.getFPGATimestamp();
+              state[1] = intakeRotator.getPosition().getValueAsDouble();
+            }
+            double elapsed = Timer.getFPGATimestamp() - state[0];
+            boolean goUp = ((int)(elapsed / 0.10) % 2 == 0);
+            double target = goUp ? state[1] + oscillationMotorRotations : state[1];
+            intakeRotator.setControl(rotatorOscillateRequest.withPosition(target));
+          },
+          () -> {
+            intake.set(0);
+            if (!Double.isNaN(state[0])) {
+              rotatorTargetPosition = state[1];
+            }
+            intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
+            state[0] = Double.NaN;
+          }
+        );
+    }
 
   /** Oscillates the rotator from deployed position upward by 60°, running roller to push balls in.
    *  Hold to run. On release, returns to deployed position. */
   public Command retractWithOscillateCommand(IntakeSpeed speed) {
     final double oscillationMotorRotations = (90.0 / 360.0) * 8.0;
-    final double[] state = {0, 0}; // [startTime, deployedPosition]
-    return this.runEnd(
-      () -> {
-        intake.set(speed.value);
-        if (state[0] == 0) {
-          state[0] = Timer.getFPGATimestamp();
-          state[1] = intakeRotator.getPosition().getValueAsDouble(); // capture deployed position
-        }
-        double elapsed = Timer.getFPGATimestamp() - state[0];
-        // Alternate between deployed position and 90° above every 0.3s
-        boolean goUp = ((int)(elapsed / 0.3) % 2 == 0);
-        double target = goUp ? state[1] + oscillationMotorRotations : state[1];
-        intakeRotator.setControl(rotatorOscillateRequest.withPosition(target));
-      },
-      () -> {
-        intake.set(0);
-        rotatorTargetPosition = state[1];
-        intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
-        state[0] = 0;
-      }
-    );
+        final double[] state = {Double.NaN, 0}; // [startTime, deployedPosition]
+        return this.runEnd(
+          () -> {
+            intake.set(speed.value);
+            if (Double.isNaN(state[0])) {
+              state[0] = Timer.getFPGATimestamp();
+              state[1] = intakeRotator.getPosition().getValueAsDouble();
+            }
+            double elapsed = Timer.getFPGATimestamp() - state[0];
+            boolean goUp = ((int)(elapsed / 0.3) % 2 == 0);
+            double target = goUp ? state[1] + oscillationMotorRotations : state[1];
+            intakeRotator.setControl(rotatorOscillateRequest.withPosition(target));
+          },
+          () -> {
+            intake.set(0);
+            if (!Double.isNaN(state[0])) {
+              rotatorTargetPosition = state[1];
+            }
+            intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
+            state[0] = Double.NaN;
+          }
+        );
   }
 
   /** Gentle oscillation for use during shooting — slower period, wider sweep, softer PID */
   public Command retractWithGentleOscillateCommand(IntakeSpeed speed) {
     final double oscillationMotorRotations = (160.0 / 360.0) * 8.0;
-    final double[] state = {0, 0}; // [startTime, deployedPosition]
-    return this.runEnd(
-      () -> {
-        intake.set(speed.value);
-        if (state[0] == 0) {
-          state[0] = Timer.getFPGATimestamp();
-          state[1] = intakeRotator.getPosition().getValueAsDouble();
-        }
-        double elapsed = Timer.getFPGATimestamp() - state[0];
-        // Alternate between deployed position and 160° above every 0.75s
-        boolean goUp = ((int)(elapsed / 0.75) % 2 == 0);
-        double target = goUp ? state[1] + oscillationMotorRotations : state[1];
-        intakeRotator.setControl(rotatorPositionRequest.withPosition(target));
-      },
-      () -> {
-        intake.set(0);
-        rotatorTargetPosition = state[1];
-        intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
-        state[0] = 0;
-      }
-    );
+        final double[] state = {Double.NaN, 0}; // [startTime, deployedPosition]
+        return this.runEnd(
+          () -> {
+            intake.set(speed.value);
+            if (Double.isNaN(state[0])) {
+              state[0] = Timer.getFPGATimestamp();
+              state[1] = intakeRotator.getPosition().getValueAsDouble();
+            }
+            double elapsed = Timer.getFPGATimestamp() - state[0];
+            boolean goUp = ((int)(elapsed / 0.75) % 2 == 0);
+            double target = goUp ? state[1] + oscillationMotorRotations : state[1];
+            intakeRotator.setControl(rotatorPositionRequest.withPosition(target));
+          },
+          () -> {
+            intake.set(0);
+            if (!Double.isNaN(state[0])) {
+              rotatorTargetPosition = state[1];
+            }
+            intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
+            state[0] = Double.NaN;
+          }
+        );
   }
 
   /** Auto-only: bounces the intake a set number of times at 0.5s intervals, then stops.
@@ -143,10 +152,10 @@ public class IntakeSubsys extends SubsystemBase {
     final double oscillationMotorRotations = (60.0 / 360.0) * 8.0;
     final double period = 0.8; // seconds per bounce cycle
     final double totalTime = bounces * period;
-    final double[] state = {0, 0}; // [startTime, deployedPosition]
+    final double[] state = {Double.NaN, 0}; // [startTime, deployedPosition]
     return this.run(() -> {
         intake.set(IntakeSpeed.INTAKE_FAST.value);
-        if (state[0] == 0) {
+        if (Double.isNaN(state[0])) {
           state[0] = Timer.getFPGATimestamp();
           state[1] = intakeRotator.getPosition().getValueAsDouble();
         }
@@ -158,9 +167,11 @@ public class IntakeSubsys extends SubsystemBase {
       .withTimeout(totalTime)
       .finallyDo(() -> {
         intake.set(0);
-        rotatorTargetPosition = state[1];
+        if (!Double.isNaN(state[0])) {
+          rotatorTargetPosition = state[1];
+        }
         intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
-        state[0] = 0;
+        state[0] = Double.NaN;
       });
   }
 
@@ -225,6 +236,7 @@ public class IntakeSubsys extends SubsystemBase {
         }
       })
       .until(() -> Math.abs(intakeRotator.getPosition().getValueAsDouble() - motorRotations) < 0.5)
+      .withTimeout(2.5)
       .finallyDo(() -> {
         rotatorTargetPosition = motorRotations;
         intakeRotator.setControl(rotatorPositionRequest.withPosition(rotatorTargetPosition));
@@ -243,8 +255,9 @@ public class IntakeSubsys extends SubsystemBase {
 
   @Override
   public void periodic() {
+    BaseStatusSignal.refreshAll(rotatorPosition);
     SmartDashboard.putBoolean("Intake Running", intake.get() != 0);
-    SmartDashboard.putNumber("Intake Rotator Position", intakeRotator.getPosition().getValueAsDouble());
+    SmartDashboard.putNumber("Intake Rotator Position", getRotatorPosition());
   }
 
   public enum IntakeSpeed {

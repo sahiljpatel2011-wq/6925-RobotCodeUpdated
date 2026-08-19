@@ -2,6 +2,7 @@ package frc.robot.subsystems;
 
 import static edu.wpi.first.units.Units.*;
 
+import java.util.ArrayDeque;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -344,24 +345,22 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
     /* Speed Multiplier */
     private static final double kDefaultSpeedMulti = 0.75;
     private double speedMulti = kDefaultSpeedMulti;
-    private int speedHoldCount = 0;
+    private final ArrayDeque<Double> speedHoldStack = new ArrayDeque<>();
 
     public Command toggleSpeedMulti(double multi) {
         return Commands.runOnce(() -> speedMulti = (speedMulti == kDefaultSpeedMulti ? multi : kDefaultSpeedMulti), this);
     }
 
-    /** Temporarily sets speed multiplier while held. Default 0.75 only when every hold is released. */
+    /** Temporarily sets speed multiplier while held. Restores the remaining hold, then 0.75. */
     public Command holdSpeedMulti(double multi) {
         return Commands.startEnd(
             () -> {
-                speedHoldCount++;
+                speedHoldStack.push(multi);
                 speedMulti = multi;
             },
             () -> {
-                speedHoldCount = Math.max(0, speedHoldCount - 1);
-                if (speedHoldCount == 0) {
-                    speedMulti = kDefaultSpeedMulti;
-                }
+                speedHoldStack.remove(multi);
+                speedMulti = speedHoldStack.isEmpty() ? kDefaultSpeedMulti : speedHoldStack.peek();
             }
         );
     }
@@ -373,5 +372,14 @@ public class CommandSwerveDrivetrain extends TunerSwerveDrivetrain implements Su
     /** wpiBlue field heading from Pigeon odometry (not vision-fused theta). */
     public double getGyroYawDegrees() {
         return getPigeon2().getYaw().getValueAsDouble();
+    }
+
+    /** Signed yaw rate for MegaTag2. Refresh so this is not a stale 0. */
+    public double getGyroYawRateDegreesPerSec() {
+        try {
+            return getPigeon2().getAngularVelocityZWorld().refresh().getValue().in(DegreesPerSecond);
+        } catch (RuntimeException e) {
+            return 0.0;
+        }
     }
 }

@@ -1,4 +1,4 @@
-{
+﻿{
   "version": "2025.0",
   "command": {
     "type": "sequential",
@@ -7,7 +7,7 @@
         {
           "type": "path",
           "data": {
-            "pathName": "Basic Shoot from infront target"
+            "pathName": "Right-Hub"
           }
         },
         {
@@ -23,12 +23,6 @@
           }
         },
         {
-          "type": "wait",
-          "data": {
-            "waitTime": 0.25
-          }
-        },
-        {
           "type": "named",
           "data": {
             "name": "StopFeed"
@@ -38,6 +32,6 @@
     }
   },
   "resetOdom": true,
-  "folder": null,
+  "folder": "Hub-NoBump",
   "choreoAuto": false
 }
