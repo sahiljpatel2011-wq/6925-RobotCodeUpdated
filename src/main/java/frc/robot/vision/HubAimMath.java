@@ -15,6 +15,10 @@ public final class HubAimMath {
     public static final double kLateralOffsetInches = 8.0;
     public static final double kPassAimOffsetDegrees = 15.0;
     public static final double kMinTanAbs = 0.02;
+    /** Same "On Target" window already on the HUD. */
+    public static final double kOnTargetDegrees = 2.0;
+    /** Same 0.15 s window the HUD already uses for a fresh tx. */
+    public static final double kAimHoldSeconds = 0.15;
 
     public static final int[] kRedHubTags = {2, 3, 4, 5, 8, 9, 10, 11};
     public static final int[] kBlueHubTags = {18, 19, 20, 21, 24, 25, 26, 27};
@@ -32,6 +36,45 @@ public final class HubAimMath {
 
     public static boolean isTrenchTag(int id) {
         return contains(kTrenchTags, id);
+    }
+
+    public static boolean isUsableHubTag(int id, boolean allianceKnown, boolean isBlue) {
+        if (allianceKnown) {
+            return isAllianceHubTag(id, isBlue);
+        }
+        return isHubTag(id);
+    }
+
+    /**
+     * Largest-area hub tag in a raw-fiducial list. Trench / opponent tags are ignored.
+     *
+     * @return index into the arrays, or -1
+     */
+    public static int bestHubIndex(
+        int[] ids,
+        double[] taPercent,
+        boolean allianceKnown,
+        boolean isBlue
+    ) {
+        if (ids == null || taPercent == null) {
+            return -1;
+        }
+        final int n = Math.min(ids.length, taPercent.length);
+        int best = -1;
+        double bestTa = -1.0;
+        for (int i = 0; i < n; i++) {
+            if (!Double.isFinite(taPercent[i]) || taPercent[i] < VisionGates.kMinTagAreaPercent) {
+                continue;
+            }
+            if (!isUsableHubTag(ids[i], allianceKnown, isBlue)) {
+                continue;
+            }
+            if (taPercent[i] > bestTa) {
+                bestTa = taPercent[i];
+                best = i;
+            }
+        }
+        return best;
     }
 
     /** Offset-right tags: hub center is left of the tag (−8 in). */
@@ -240,6 +283,109 @@ public final class HubAimMath {
             case 1, 7, 17, 23 -> kPassAimOffsetDegrees;
             default -> 0.0;
         };
+    }
+
+    /** Original kP aim so the robot keeps turning onto the hub. */
+    public static double aimAssistOmega(double txDegrees, double kP) {
+        if (!Double.isFinite(txDegrees) || !Double.isFinite(kP)) {
+            return 0.0;
+        }
+        return -txDegrees * kP;
+    }
+
+    public static boolean keepLastAim(double nowSeconds, double lastSeenSeconds, double holdSeconds) {
+        if (!Double.isFinite(nowSeconds) || !Double.isFinite(lastSeenSeconds) || !Double.isFinite(holdSeconds)) {
+            return false;
+        }
+        if (lastSeenSeconds < 0.0 || holdSeconds <= 0.0) {
+            return false;
+        }
+        return nowSeconds - lastSeenSeconds <= holdSeconds;
+    }
+
+    public static boolean isOnTarget(double txDegrees) {
+        return Double.isFinite(txDegrees) && Math.abs(txDegrees) < kOnTargetDegrees;
+    }
+
+    /**
+     * Start feeding only when spun up and aimed. Once feeding, keep feeding
+     * so a 2° flicker cannot cut the volley.
+     */
+    public static boolean autoFeed(boolean atSpeed, boolean onTarget, boolean alreadyFeeding) {
+        return alreadyFeeding || (atSpeed && onTarget);
+    }
+
+    /**
+     * Limelight hub range minus distance closed during look-ahead. Uses existing
+     * kLookAheadSeconds so moving shots use the same table as standing shots.
+     */
+    public static double movingShotInches(
+        double cameraHubInches,
+        double robotXMeters,
+        double robotYMeters,
+        double hubXMeters,
+        double hubYMeters,
+        double fieldVxMetersPerSec,
+        double fieldVyMetersPerSec,
+        double lookAheadSeconds
+    ) {
+        if (!Double.isFinite(cameraHubInches) || cameraHubInches <= 0.0) {
+            return 75.125;
+        }
+        if (!(lookAheadSeconds > 0.0)
+            || !Double.isFinite(fieldVxMetersPerSec)
+            || !Double.isFinite(fieldVyMetersPerSec)) {
+            return cameraHubInches;
+        }
+        final double dx = hubXMeters - robotXMeters;
+        final double dy = hubYMeters - robotYMeters;
+        final double dist = Math.hypot(dx, dy);
+        if (dist < 1e-3) {
+            return cameraHubInches;
+        }
+        final double closingMeters =
+            (fieldVxMetersPerSec * dx + fieldVyMetersPerSec * dy) / dist * lookAheadSeconds;
+        return cameraHubInches - closingMeters / 0.0254;
+    }
+
+    /**
+     * Extra Limelight-style tx (deg) so the nose leads the hub while translating.
+     * Standing still is 0.
+     */
+    public static double movingLeadTxDegrees(
+        double robotXMeters,
+        double robotYMeters,
+        double headingRadians,
+        double hubXMeters,
+        double hubYMeters,
+        double fieldVxMetersPerSec,
+        double fieldVyMetersPerSec,
+        double lookAheadSeconds
+    ) {
+        if (!(lookAheadSeconds > 0.0)
+            || !Double.isFinite(fieldVxMetersPerSec)
+            || !Double.isFinite(fieldVyMetersPerSec)) {
+            return 0.0;
+        }
+        final double now = poseAimTxDegrees(
+            robotXMeters, robotYMeters, headingRadians, hubXMeters, hubYMeters);
+        final double future = poseAimTxDegrees(
+            robotXMeters + fieldVxMetersPerSec * lookAheadSeconds,
+            robotYMeters + fieldVyMetersPerSec * lookAheadSeconds,
+            headingRadians,
+            hubXMeters,
+            hubYMeters);
+        double lead = future - now;
+        if (!Double.isFinite(lead)) {
+            return 0.0;
+        }
+        while (lead > 180.0) {
+            lead -= 360.0;
+        }
+        while (lead < -180.0) {
+            lead += 360.0;
+        }
+        return lead;
     }
 
     private static boolean contains(int[] ids, int id) {

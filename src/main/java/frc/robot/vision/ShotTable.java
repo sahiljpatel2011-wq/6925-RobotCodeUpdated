@@ -4,6 +4,7 @@ import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Meters;
 import static frc.robot.Constants.ShooterConstants.*;
 
+import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.interpolation.InterpolatingTreeMap;
 import edu.wpi.first.math.interpolation.Interpolator;
 import edu.wpi.first.math.interpolation.InverseInterpolator;
@@ -11,11 +12,10 @@ import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.units.measure.Distance;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
-import frc.robot.FeatureFlags;
 
 /**
  * Single source for 6925's live shot table (Constants + 150 RPM).
- * Optional NT overrides when FeatureFlags.ntShotTable() is true.
+ * Always uses the compiled table so Dashboard edits cannot change a match.
  */
 public final class ShotTable {
     public static final class Shot {
@@ -60,7 +60,14 @@ public final class ShotTable {
 
     /** Compiled live table only — used by unit tests and as NT fallback. */
     public static Shot compiled(Distance distance) {
-        return kCompiledTable.get(distance);
+        double inches = 75.125;
+        if (distance != null) {
+            final double raw = distance.in(Inches);
+            if (Double.isFinite(raw)) {
+                inches = MathUtil.clamp(raw, 47.0, 110.0);
+            }
+        }
+        return kCompiledTable.get(Inches.of(inches));
     }
 
     public static Shot compiledInches(double inches) {
@@ -68,9 +75,6 @@ public final class ShotTable {
     }
 
     public static Shot get(Distance distance) {
-        if (FeatureFlags.ntShotTable()) {
-            return interpolateWithNt(distance.in(Inches));
-        }
         return compiled(distance);
     }
 

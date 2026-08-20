@@ -33,6 +33,28 @@ class ShotTableTest {
         org.junit.jupiter.api.Assertions.assertNotEquals(3100.0, at47.shooterRPM);
     }
 
+    @Test
+    void clampsOutsideTableAndIgnoresNonFinite() {
+        assertEquals(3500.0, ShotTable.compiledInches(10.0).shooterRPM, 1e-6);
+        assertEquals(3650.0, ShotTable.compiledInches(200.0).shooterRPM, 1e-6);
+        assertEquals(
+            ShotTable.compiledInches(75.125).shooterRPM,
+            ShotTable.compiled(edu.wpi.first.units.Units.Inches.of(Double.NaN)).shooterRPM,
+            1e-6);
+    }
+
+    @Test
+    void liveGetUsesCompiledTable() {
+        assertEquals(
+            ShotTable.compiledInches(75.125).shooterRPM,
+            ShotTable.getInches(75.125).shooterRPM,
+            1e-6);
+        assertEquals(
+            ShotTable.compiledInches(75.125).hoodPosition,
+            ShotTable.getInches(75.125).hoodPosition,
+            1e-6);
+    }
+
     private static void assertShot(double inches, double rpm, double hood) {
         final Shot shot = ShotTable.compiledInches(inches);
         assertEquals(rpm, shot.shooterRPM, 1e-6, "RPM at " + inches + " in");

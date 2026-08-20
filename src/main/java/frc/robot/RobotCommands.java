@@ -4,13 +4,11 @@ import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Meters;
 import static frc.robot.Constants.ShooterConstants.*;
 
-import java.util.Optional;
 import java.util.function.DoubleSupplier;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
 
-import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
@@ -33,7 +31,6 @@ import frc.robot.subsystems.ShooterSubsys;
 import frc.robot.vision.HubAimMath;
 import frc.robot.vision.ShotTable;
 import frc.robot.vision.ShotTable.Shot;
-import frc.robot.LimelightHelpers.RawDetection;
 
 public final class RobotCommands {
     private static ShooterSubsys shooterSubsys;
@@ -46,6 +43,11 @@ public final class RobotCommands {
     private static double lastTx = 0.0;
     private static double lastTxTime = 0.0;
     private static String lastMode = "Idle";
+    private static double lastGoodAimTx = 0.0;
+    private static double lastGoodAimInches = 75.125;
+    private static double lastGoodAimTime = -1.0;
+    private static double lastGoodPassTx = 0.0;
+    private static double lastGoodPassTime = -1.0;
 
     public static void init(
         ShooterSubsys shooter,
@@ -236,17 +238,56 @@ public final class RobotCommands {
             .withDriveRequestType(DriveRequestType.OpenLoopVoltage);
 
         return Commands.runEnd(() -> {
-                final AimSnapshot aim = computeHubAim();
-                final double rotationRate = pdRotation(aim.tx);
+                final var hubTag = limelightSubsys.hubAimTag();
+                Distance distance;
+                double tx = 0.0;
+                int tagID = 0;
+                final double now = Timer.getFPGATimestamp();
+                if (hubTag.isPresent()) {
+                    tagID = hubTag.get().id;
+                    final double rawTx = hubTag.get().txDegrees;
+                    final double ty = hubTag.get().tyDegrees;
+                    final var cameraToTag = HubAimMath.cameraToTagInches(ty);
+                    if (cameraToTag.isPresent()) {
+                        distance = Inches.of(movingShotInches(
+                            cameraToTag.getAsDouble() + kHubCenterOffsetInches));
+                        tx = HubAimMath.hubAimTxDegrees(tagID, rawTx, ty).orElse(rawTx)
+                            + kAimOffsetDegrees
+                            + movingLeadTxDegrees();
+                    } else {
+                        distance = getPredictedDistanceToTarget();
+                        tx = rawTx + kAimOffsetDegrees + movingLeadTxDegrees();
+                    }
+                    lastGoodAimTx = tx;
+                    lastGoodAimInches = distance.in(Inches);
+                    lastGoodAimTime = now;
+                } else if (HubAimMath.keepLastAim(now, lastGoodAimTime, HubAimMath.kAimHoldSeconds)) {
+                    tx = lastGoodAimTx;
+                    distance = Inches.of(lastGoodAimInches);
+                } else {
+                    distance = getPredictedDistanceToTarget();
+                }
+                lastTx = tx;
+                lastTxTime = now;
+                final double rotationRate = HubAimMath.aimAssistOmega(tx, kAimP);
                 drivetrain.setControl(aimDrive
                     .withVelocityX(velocityX.getAsDouble())
                     .withVelocityY(velocityY.getAsDouble())
                     .withRotationalRate(rotationRate));
 
-                final Shot shot = ShotTable.get(aim.distance);
+                final Shot shot = ShotTable.get(distance);
                 shooterSubsys.setVelocityRPM(shot.shooterRPM);
                 hoodSubsys.setPosition(shot.hoodPosition);
-                publishAim(aim, shot, rotationRate);
+                SmartDashboard.putNumber("Tracked Tag ID", tagID);
+                SmartDashboard.putNumber("Auto Distance (inches)", distance.in(Inches));
+                SmartDashboard.putNumber("Corrected TX (deg)", tx);
+                SmartDashboard.putBoolean("LL TV (code)", LimelightHelpers.getTV("limelight"));
+                SmartDashboard.putNumber("LL TX (code)", LimelightHelpers.getTX("limelight"));
+                SmartDashboard.putNumber("Aim Rotation Rate", rotationRate);
+                SmartDashboard.putNumber("Target RPM", shot.shooterRPM);
+                SmartDashboard.putNumber("Target Hood Position", shot.hoodPosition);
+                SmartDashboard.putBoolean("On Target", Math.abs(tx) < HubAimMath.kOnTargetDegrees);
+                SmartDashboard.putBoolean("Aim Used Hub Tag", HubAimMath.isHubTag(tagID));
             },
             () -> {
                 if (!feederSubsys.isFeeding()) {
@@ -266,12 +307,21 @@ public final class RobotCommands {
                 hoodSubsys.setPosition(kFullFieldPassHoodPosition);
 
                 final int tagID = (int) LimelightHelpers.getFiducialID("limelight");
-                double rotationRate = 0.0;
-                if (LimelightHelpers.getTV("limelight") && HubAimMath.isTrenchTag(tagID)) {
+                final boolean isTrenchTag = tagID == 7 || tagID == 12 || tagID == 23 || tagID == 28;
+                double tx = 0.0;
+                final double now = Timer.getFPGATimestamp();
+                if (LimelightHelpers.getTV("limelight") && isTrenchTag) {
                     final double rawTx = LimelightHelpers.getTX("limelight");
-                    final double correctedTx = rawTx + HubAimMath.passAimOffsetDegrees(tagID);
-                    rotationRate = pdRotation(correctedTx);
+                    final double offset = (tagID == 12 || tagID == 28)
+                        ? -kPassAimOffsetDegrees
+                        : kPassAimOffsetDegrees;
+                    tx = rawTx + offset;
+                    lastGoodPassTx = tx;
+                    lastGoodPassTime = now;
+                } else if (HubAimMath.keepLastAim(now, lastGoodPassTime, HubAimMath.kAimHoldSeconds)) {
+                    tx = lastGoodPassTx;
                 }
+                final double rotationRate = HubAimMath.aimAssistOmega(tx, kAimP);
 
                 drivetrain.setControl(passDrive
                     .withVelocityX(velocityX.getAsDouble())
@@ -287,32 +337,31 @@ public final class RobotCommands {
         );
     }
 
-    public static Command fuelAssist(DoubleSupplier velocityX, DoubleSupplier velocityY, double maxSpeed) {
-        final SwerveRequest.FieldCentric assistDrive = new SwerveRequest.FieldCentric()
-            .withDeadband(maxSpeed * 0.1)
-            .withDriveRequestType(DriveRequestType.OpenLoopVoltage);
-
-        return Commands.runEnd(() -> {
-                if (!FeatureFlags.fuelAssist()) {
-                    limelightSubsys.setPipeline(0);
-                    drivetrain.setControl(assistDrive
-                        .withVelocityX(velocityX.getAsDouble())
-                        .withVelocityY(velocityY.getAsDouble())
-                        .withRotationalRate(0));
-                    return;
+    public static Command autoshootWhileAimed() {
+        final double oscillationMotorRotations = (60.0 / 360.0) * 8.0;
+        final double period = 0.8;
+        final double[] state = {Double.NaN, 0};
+        return Commands.runEnd(
+            () -> {
+                final boolean onTarget = HubAimMath.isOnTarget(lastTx)
+                    && HubAimMath.keepLastAim(
+                        Timer.getFPGATimestamp(), lastTxTime, HubAimMath.kAimHoldSeconds);
+                if (HubAimMath.autoFeed(
+                    shooterSubsys.isReadyToFeed(), onTarget, feederSubsys.isFeeding())) {
+                    feederSubsys.setSpeed(FeederSpeed.FEED_FAST);
+                    intakeSubsys.setSpeed(IntakeSpeed.INTAKE_FAST);
+                    tickOscillate(state, oscillationMotorRotations, period);
+                } else {
+                    feederSubsys.setSpeed(FeederSpeed.OFF);
+                    intakeSubsys.setSpeed(IntakeSpeed.OFF);
                 }
-                limelightSubsys.setPipeline(1);
-                final Optional<RawDetection> fuel = limelightSubsys.bestFuelDetection();
-                final double rotationRate = fuel
-                    .map(detection -> pdRotation(detection.txnc))
-                    .orElse(0.0);
-                drivetrain.setControl(assistDrive
-                    .withVelocityX(velocityX.getAsDouble())
-                    .withVelocityY(velocityY.getAsDouble())
-                    .withRotationalRate(rotationRate));
             },
-            () -> limelightSubsys.setPipeline(0),
-            drivetrain
+            () -> {
+                feederSubsys.setSpeed(FeederSpeed.OFF);
+                intakeSubsys.setSpeed(IntakeSpeed.OFF);
+                restoreOscillate(state);
+            },
+            feederSubsys, intakeSubsys
         );
     }
 
@@ -365,16 +414,57 @@ public final class RobotCommands {
             return Inches.of(75.125);
         }
         final Pose2d currentPose = drivetrain.getState().Pose;
-        final ChassisSpeeds fieldSpeeds = ChassisSpeeds.fromRobotRelativeSpeeds(
-            drivetrain.getState().Speeds, currentPose.getRotation());
+        final ChassisSpeeds speeds = fieldSpeeds();
         final Translation2d futurePosition = currentPose.getTranslation().plus(
             new Translation2d(
-                fieldSpeeds.vxMetersPerSecond * kLookAheadSeconds,
-                fieldSpeeds.vyMetersPerSecond * kLookAheadSeconds
+                speeds.vxMetersPerSecond * kLookAheadSeconds,
+                speeds.vyMetersPerSecond * kLookAheadSeconds
             )
         );
-        final Translation2d targetPosition = Landmarks.targetPosition();
-        return Meters.of(futurePosition.getDistance(targetPosition));
+        return Meters.of(futurePosition.getDistance(Landmarks.targetPosition()));
+    }
+
+    private static ChassisSpeeds fieldSpeeds() {
+        final Pose2d pose = drivetrain.getState().Pose;
+        return ChassisSpeeds.fromRobotRelativeSpeeds(
+            drivetrain.getState().Speeds, pose.getRotation());
+    }
+
+    /** Limelight hub range, then the existing 0.25 s look-ahead while translating. */
+    private static double movingShotInches(double cameraHubInches) {
+        if (!Landmarks.isAllianceKnown()) {
+            return cameraHubInches;
+        }
+        final Pose2d pose = drivetrain.getState().Pose;
+        final ChassisSpeeds speeds = fieldSpeeds();
+        final Translation2d hub = Landmarks.targetPosition();
+        return HubAimMath.movingShotInches(
+            cameraHubInches,
+            pose.getX(),
+            pose.getY(),
+            hub.getX(),
+            hub.getY(),
+            speeds.vxMetersPerSecond,
+            speeds.vyMetersPerSecond,
+            kLookAheadSeconds);
+    }
+
+    private static double movingLeadTxDegrees() {
+        if (!Landmarks.isAllianceKnown()) {
+            return 0.0;
+        }
+        final Pose2d pose = drivetrain.getState().Pose;
+        final ChassisSpeeds speeds = fieldSpeeds();
+        final Translation2d hub = Landmarks.targetPosition();
+        return HubAimMath.movingLeadTxDegrees(
+            pose.getX(),
+            pose.getY(),
+            pose.getRotation().getRadians(),
+            hub.getX(),
+            hub.getY(),
+            speeds.vxMetersPerSecond,
+            speeds.vyMetersPerSecond,
+            kLookAheadSeconds);
     }
 
     public static Command adjustedWindUp() {
@@ -440,7 +530,7 @@ public final class RobotCommands {
         SmartDashboard.putNumber("Shooter RPM 10", shooterSubsys.getVelocityRPM10());
         SmartDashboard.putNumber("LL Pipeline", limelightSubsys.getPipelineIndex());
         SmartDashboard.putString("Shooter Mode", shooterMode());
-        SmartDashboard.putBoolean("On Target", Timer.getFPGATimestamp() - lastTxTime < 0.15 && Math.abs(lastTx) < 2.0);
+        SmartDashboard.putBoolean("On Target", Timer.getFPGATimestamp() - lastTxTime < HubAimMath.kAimHoldSeconds && Math.abs(lastTx) < HubAimMath.kOnTargetDegrees);
         SmartDashboard.putNumber("Hood Position", hoodSubsys.getPosition());
         SmartDashboard.putNumber("Hood Angle (deg)", hoodSubsys.getAngleDegrees());
     }
@@ -497,70 +587,5 @@ public final class RobotCommands {
     private static boolean isAimHeld() {
         return shooterSubsys.getCurrentCommand() != null
             && shooterSubsys.getCurrentCommand() != shooterSubsys.getDefaultCommand();
-    }
-
-    private static final double kMaxAimOmega = 1.5 * 2.0 * Math.PI;
-
-    /** @param tx Limelight-style degrees (positive = target to the right). */
-    private static double pdRotation(double tx) {
-        final double now = Timer.getFPGATimestamp();
-        final double dt = now - lastTxTime;
-        final double dTx = dt > 1e-3 && dt < 0.2 ? (tx - lastTx) / dt : 0.0;
-        lastTx = tx;
-        lastTxTime = now;
-        return MathUtil.clamp(-tx * kAimP - dTx * kAimD, -kMaxAimOmega, kMaxAimOmega);
-    }
-
-    private static AimSnapshot computeHubAim() {
-        final Optional<HubAimMath.WeightedHubAim> hubAim = limelightSubsys.weightedHubAim();
-        if (hubAim.isPresent()) {
-            final HubAimMath.WeightedHubAim aim = hubAim.get();
-            final Distance distance = Double.isFinite(aim.rangeInches)
-                ? Inches.of(aim.rangeInches)
-                : getPredictedDistanceToTarget();
-            return new AimSnapshot(
-                aim.bestId,
-                aim.txDegrees + kAimOffsetDegrees,
-                distance,
-                true
-            );
-        }
-        final Pose2d pose = drivetrain.getState().Pose;
-        final Optional<Translation2d> hub = Landmarks.targetPositionOptional();
-        if (hub.isEmpty()) {
-            return new AimSnapshot(0, 0, Inches.of(75.125), false);
-        }
-        final double tx = HubAimMath.poseAimTxDegrees(
-            pose.getX(), pose.getY(), pose.getRotation().getRadians(),
-            hub.get().getX(), hub.get().getY());
-        final Distance distance = getPredictedDistanceToTarget();
-        return new AimSnapshot(0, tx + kAimOffsetDegrees, distance, false);
-    }
-
-    private static void publishAim(AimSnapshot aim, Shot shot, double rotationRate) {
-        SmartDashboard.putNumber("Tracked Tag ID", aim.tagId);
-        SmartDashboard.putNumber("Auto Distance (inches)", aim.distance.in(Inches));
-        SmartDashboard.putNumber("Corrected TX (deg)", aim.tx);
-        SmartDashboard.putBoolean("LL TV (code)", LimelightHelpers.getTV("limelight"));
-        SmartDashboard.putNumber("LL TX (code)", LimelightHelpers.getTX("limelight"));
-        SmartDashboard.putNumber("Aim Rotation Rate", rotationRate);
-        SmartDashboard.putNumber("Target RPM", shot.shooterRPM);
-        SmartDashboard.putNumber("Target Hood Position", shot.hoodPosition);
-        SmartDashboard.putBoolean("On Target", Math.abs(aim.tx) < 2.0);
-        SmartDashboard.putBoolean("Aim Used Hub Tag", aim.fromTag);
-    }
-
-    private static final class AimSnapshot {
-        final int tagId;
-        final double tx;
-        final Distance distance;
-        final boolean fromTag;
-
-        AimSnapshot(int tagId, double tx, Distance distance, boolean fromTag) {
-            this.tagId = tagId;
-            this.tx = tx;
-            this.distance = distance;
-            this.fromTag = fromTag;
-        }
     }
 }

@@ -43,9 +43,12 @@ package frc.robot;
  *
  * LIMELIGHT ("limelight")
  *   - 1.46" behind center, 25.39" up, 26° pitch. Fiducial offset -0.5842 m
- *     (keep until range day). Pipeline 0 AprilTag / MegaTag2 XY-only.
+ *     (keep until range day). Pipeline 0 AprilTag / MegaTag2 — camera settings
+ *     stay on the Limelight (no crop/IMU/tag-filter overrides from code).
  *     Hub aim uses official hub tags 2–5/8–11 (red) and 18–21/24–27 (blue).
- *     Pipeline 1 Fuel B1 is code-only (unbound; flags off).
+ *     AprilTags are read every cycle for MegaTag field pose (Field Map on DS).
+ *     Hub aim still uses hub tags only; pose uses every tag the camera sees.
+ *     Match Status / Match Ready on DS — point at tags until READY.
  *
  * OPERATOR (X3D port 1) — same bindings as original configureBindings()
  *   1  = Shoot (feeder + intake bounce) + hold 1/5 drive
@@ -75,7 +78,6 @@ package frc.robot;
  */
 
 import static edu.wpi.first.units.Units.*;
-import static frc.robot.Constants.ShooterConstants.kDefaultHoodPosition;
 
 import com.ctre.phoenix6.swerve.SwerveModule.DriveRequestType;
 import com.ctre.phoenix6.swerve.SwerveRequest;
@@ -84,7 +86,11 @@ import edu.wpi.first.math.filter.SlewRateLimiter;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import com.pathplanner.lib.auto.AutoBuilder;
+import edu.wpi.first.wpilibj.Alert;
+import edu.wpi.first.wpilibj.Alert.AlertType;
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.RobotController;
+import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
@@ -117,8 +123,18 @@ public class RobotContainer {
 
     private final Telemetry logger = new Telemetry(MaxSpeed);
     private final SendableChooser<Command> autoChooser;
+    private final Field2d fieldMap = new Field2d();
     private String cachedAutoName = "None";
     private boolean visionSeeded = false;
+    private boolean visionFusedThisCycle = false;
+    private final Alert alertLimelight = new Alert("Limelight not streaming", AlertType.kError);
+    private final Alert alertPipeline = new Alert("Limelight pipeline is not AprilTags (0)", AlertType.kWarning);
+    private final Alert alertSeed = new Alert("Point camera at tags while disabled to seed field pose", AlertType.kWarning);
+    private final Alert alertAlliance = new Alert("Alliance unknown — wait for DS/FMS", AlertType.kWarning);
+    private final Alert alertDriver = new Alert("Driver Xbox not on port 0", AlertType.kError);
+    private final Alert alertOperator = new Alert("Operator stick not on port 1", AlertType.kError);
+    private final Alert alertAuto = new Alert("Auto is None — pick one before the match", AlertType.kWarning);
+    private final Alert alertBattery = new Alert("Battery below 12.0 V", AlertType.kWarning);
 
     private final CommandXboxController joystick = new CommandXboxController(0);
     private final CommandX3DController operator = new CommandX3DController(1);
@@ -132,7 +148,6 @@ public class RobotContainer {
     private final LimelightSubsys limelight = new LimelightSubsys(
         "limelight",
         () -> drivetrain.getState().Pose,
-        () -> drivetrain.getState().Pose.getRotation().getDegrees(),
         drivetrain::getGyroYawRateDegreesPerSec
     );
 
@@ -142,8 +157,36 @@ public class RobotContainer {
         configureBindings();
         drivetrain.registerTelemetry(logger::telemeterize);
 
-        autoChooser = AutoBuilder.buildAutoChooser("M-S");
+        autoChooser = buildSafeAutoChooser("M-S");
         SmartDashboard.putData("Auto Chooser", autoChooser);
+        SmartDashboard.putData("Field Map", fieldMap);
+    }
+
+    /**
+     * Load each PathPlanner auto on its own so one broken file cannot take
+     * down robot code (DS "no robot code") at boot.
+     */
+    private static SendableChooser<Command> buildSafeAutoChooser(String defaultAutoName) {
+        final SendableChooser<Command> chooser = new SendableChooser<>();
+        chooser.setDefaultOption("None", Commands.none().withName("None"));
+        if (!AutoBuilder.isConfigured()) {
+            DriverStation.reportError("AutoBuilder is not configured; autos disabled", false);
+            return chooser;
+        }
+        for (String name : AutoBuilder.getAllAutoNames()) {
+            try {
+                final Command auto = AutoBuilder.buildAuto(name).withName(name);
+                if (name.equals(defaultAutoName)) {
+                    chooser.setDefaultOption(name, auto);
+                } else {
+                    chooser.addOption(name, auto);
+                }
+            } catch (Exception ex) {
+                DriverStation.reportError(
+                    "Skipping auto '" + name + "': " + ex.getMessage(), false);
+            }
+        }
+        return chooser;
     }
 
     private void registerNamedCommands() {
@@ -169,7 +212,7 @@ public class RobotContainer {
             intake);
         NamedCommandRegistry.register("intakeBounce", Commands::none);
         NamedCommandRegistry.register("hoodReset",
-            () -> Commands.runOnce(() -> hood.setPosition(kDefaultHoodPosition), hood));
+            () -> Commands.runOnce(() -> hood.setPosition(0), hood));
 
         NamedCommandRegistry.registerNone("jolt");
         NamedCommandRegistry.registerNone("ClimbUp");
@@ -267,8 +310,45 @@ public class RobotContainer {
         if (autoChooser.getSelected() != null) {
             cachedAutoName = autoChooser.getSelected().getName();
         }
+        final Pose2d pose = drivetrain.getState().Pose;
+        fieldMap.setRobotPose(pose);
+        Landmarks.targetPositionOptional().ifPresent(hub ->
+            fieldMap.getObject("Hub").setPose(new Pose2d(hub, Rotation2d.kZero)));
         SmartDashboard.putString("Selected Auto", cachedAutoName);
         SmartDashboard.putBoolean("VisionSeeded", visionSeeded);
+        SmartDashboard.putBoolean("Vision Fused", visionFusedThisCycle);
+        SmartDashboard.putNumber("Field X (m)", pose.getX());
+        SmartDashboard.putNumber("Field Y (m)", pose.getY());
+        SmartDashboard.putNumber("Field X (in)", Meters.of(pose.getX()).in(Inches));
+        SmartDashboard.putNumber("Field Y (in)", Meters.of(pose.getY()).in(Inches));
+        SmartDashboard.putNumber("Field Heading (deg)", pose.getRotation().getDegrees());
+        final boolean driverConnected = DriverStation.isJoystickConnected(0);
+        final boolean operatorConnected = DriverStation.isJoystickConnected(1);
+        final double battery = RobotController.getBatteryVoltage();
+        final String matchStatus = MatchReady.checklist(
+            limelight.isStreaming(),
+            limelight.isAprilTagPipeline(),
+            visionSeeded,
+            Landmarks.isAllianceKnown(),
+            driverConnected,
+            operatorConnected,
+            battery,
+            cachedAutoName
+        );
+        SmartDashboard.putString("Match Status", matchStatus);
+        SmartDashboard.putBoolean("Match Ready", MatchReady.isReady(matchStatus));
+        SmartDashboard.putBoolean("Driver Xbox 0", driverConnected);
+        SmartDashboard.putBoolean("Operator X3D 1", operatorConnected);
+        SmartDashboard.putBoolean("LL Streaming", limelight.isStreaming());
+        FeatureFlags.publishDefaults();
+        alertLimelight.set(!limelight.isStreaming());
+        alertPipeline.set(limelight.isStreaming() && !limelight.isAprilTagPipeline());
+        alertSeed.set(!visionSeeded);
+        alertAlliance.set(!Landmarks.isAllianceKnown());
+        alertDriver.set(!driverConnected);
+        alertOperator.set(!operatorConnected);
+        alertAuto.set(!MatchReady.autoSelected(cachedAutoName));
+        alertBattery.set(battery < MatchReady.kMinBatteryVolts);
         RobotCommands.updateHud();
     }
 
@@ -277,47 +357,58 @@ public class RobotContainer {
     private static final double kMaxYawRateDegPerSec = 360.0;
 
     public void updateVision() {
+        visionFusedThisCycle = false;
         if (limelight == null) {
             return;
         }
         if (DriverStation.isAutonomous() && !FeatureFlags.visionInAuto()) {
             return;
         }
-        limelight.getMeasurement().ifPresent(measurement -> {
-            final Pose2d currentPose = drivetrain.getState().Pose;
-            final double jump = currentPose.getTranslation()
-                .getDistance(measurement.poseEstimate.pose.getTranslation());
-            final double maxJump = DriverStation.isAutonomous()
-                ? kMaxVisionJumpAutoMeters
-                : kMaxVisionJumpTeleopMeters;
-            final double yawRate = Math.abs(drivetrain.getGyroYawRateDegreesPerSec());
-            if (!VisionGates.allowVisionJump(currentPose.getX(), currentPose.getY(), jump, maxJump)
-                || yawRate > kMaxYawRateDegPerSec) {
-                return;
-            }
-            drivetrain.addVisionMeasurement(
-                measurement.poseEstimate.pose,
-                measurement.poseEstimate.timestampSeconds,
-                measurement.standardDeviations
-            );
-        });
+        try {
+            limelight.getMeasurement().ifPresent(measurement -> {
+                final Pose2d currentPose = drivetrain.getState().Pose;
+                final double jump = currentPose.getTranslation()
+                    .getDistance(measurement.poseEstimate.pose.getTranslation());
+                final double maxJump = DriverStation.isAutonomous()
+                    ? kMaxVisionJumpAutoMeters
+                    : kMaxVisionJumpTeleopMeters;
+                final double yawRate = Math.abs(drivetrain.getGyroYawRateDegreesPerSec());
+                if (!VisionGates.allowVisionJump(currentPose.getX(), currentPose.getY(), jump, maxJump)
+                    || yawRate > kMaxYawRateDegPerSec) {
+                    return;
+                }
+                drivetrain.addVisionMeasurement(
+                    measurement.poseEstimate.pose,
+                    measurement.poseEstimate.timestampSeconds,
+                    measurement.standardDeviations
+                );
+                fieldMap.getObject("Vision").setPose(measurement.poseEstimate.pose);
+                visionFusedThisCycle = true;
+            });
+        } catch (RuntimeException ignored) {
+        }
     }
 
     public void prepareVisionSeed() {
-        visionSeeded = false;
+        if (MatchReady.clearVisionSeedOnDisable(DriverStation.isFMSAttached(), visionSeeded)) {
+            visionSeeded = false;
+        }
     }
 
     public void seedPoseFromVision() {
         if (limelight == null || visionSeeded) {
             return;
         }
-        limelight.getMegaTag1Measurement().ifPresent(measurement -> {
-            if (measurement.poseEstimate.tagCount < 1) {
-                return;
-            }
-            drivetrain.resetPose(measurement.poseEstimate.pose);
-            visionSeeded = true;
-            SmartDashboard.putBoolean("VisionSeeded", true);
-        });
+        try {
+            limelight.getMegaTag1Measurement().ifPresent(measurement -> {
+                if (measurement.poseEstimate.tagCount < 1) {
+                    return;
+                }
+                drivetrain.resetPose(measurement.poseEstimate.pose);
+                visionSeeded = true;
+                SmartDashboard.putBoolean("VisionSeeded", true);
+            });
+        } catch (RuntimeException ignored) {
+        }
     }
 }

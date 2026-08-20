@@ -109,6 +109,64 @@ class HubAimMathTest {
     }
 
     @Test
+    void bestHubIndexIgnoresTrenchAndPicksLargestHub() {
+        assertEquals(
+            1,
+            HubAimMath.bestHubIndex(
+                new int[] {7, 26, 18},
+                new double[] {5.0, 1.2, 0.4},
+                true,
+                true));
+        assertEquals(
+            -1,
+            HubAimMath.bestHubIndex(
+                new int[] {7, 8},
+                new double[] {2.0, 1.0},
+                true,
+                true));
+        assertEquals(
+            1,
+            HubAimMath.bestHubIndex(
+                new int[] {7, 8},
+                new double[] {2.0, 1.0},
+                false,
+                true));
+    }
+
+    @Test
+    void aimAssistTurnsBotAndHoldsBriefly() {
+        assertEquals(-0.15 * 0.5, HubAimMath.aimAssistOmega(0.5, 0.15), 1e-9);
+        assertEquals(-0.15 * 4.0, HubAimMath.aimAssistOmega(4.0, 0.15), 1e-9);
+        assertTrue(HubAimMath.keepLastAim(1.10, 1.00, 0.15));
+        assertFalse(HubAimMath.keepLastAim(1.20, 1.00, 0.15));
+        assertFalse(HubAimMath.keepLastAim(1.00, -1.0, 0.15));
+        assertTrue(HubAimMath.isOnTarget(0.0));
+        assertFalse(HubAimMath.isOnTarget(2.0));
+        assertFalse(HubAimMath.autoFeed(false, true, false));
+        assertFalse(HubAimMath.autoFeed(true, false, false));
+        assertTrue(HubAimMath.autoFeed(true, true, false));
+        assertTrue(HubAimMath.autoFeed(false, false, true), "keep feeding after lock");
+    }
+
+    @Test
+    void movingShotUsesLookAheadOnLimelightRange() {
+        assertEquals(
+            100.0,
+            HubAimMath.movingShotInches(100.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.25),
+            1e-6);
+        final double towardHub = HubAimMath.movingShotInches(100.0, 0.0, 0.0, 2.0, 0.0, 1.0, 0.0, 0.25);
+        assertTrue(towardHub < 100.0);
+        assertEquals(100.0 - 0.25 / 0.0254, towardHub, 1e-6);
+        assertEquals(
+            0.0,
+            HubAimMath.movingLeadTxDegrees(0.0, 0.0, 0.0, 2.0, 0.0, 1.0, 0.0, 0.25),
+            1e-6);
+        final double strafeLead = HubAimMath.movingLeadTxDegrees(
+            0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 1.0, 0.25);
+        assertTrue(strafeLead > 1.0, "after strafing left the hub is to the right of the nose");
+    }
+
+    @Test
     void tagGeometryDoesNotDoubleCountHubHeading() {
         final double robotX = 2.55;
         final double robotY = 4.04;

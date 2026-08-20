@@ -48,7 +48,7 @@ public final class NamedCommandRegistry {
 
     public static void registerNone(String name) {
         NAMES.add(name);
-        NamedCommands.registerCommand(name, Commands.none());
+        NamedCommands.registerCommand(name, Commands.defer(Commands::none, Set.of()));
     }
 
     public static boolean isRegistered(String name) {
