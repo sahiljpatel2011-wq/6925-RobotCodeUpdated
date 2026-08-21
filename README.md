@@ -2,7 +2,7 @@
 
 Woodward Academy, College Park, GA. This robot **shoots Fuel** with three independent Kraken flywheels. It is not a dump-bin, does not climb, and is too tall for the trench (use bump ramps).
 
-Research: [docs/TEAM-6925-RESEARCH.md](docs/TEAM-6925-RESEARCH.md). Named commands: [docs/NAMED-COMMANDS.md](docs/NAMED-COMMANDS.md).
+Full robot knowledge (YouTube, OA, hardware, aim): [docs/6925-ROBOT-KNOWLEDGE.md](docs/6925-ROBOT-KNOWLEDGE.md). **All formulas:** [docs/6925-MATH.md](docs/6925-MATH.md). Named commands: [docs/NAMED-COMMANDS.md](docs/NAMED-COMMANDS.md).
 
 ## How it scores
 
@@ -24,15 +24,15 @@ Xbox **right bumper** aims at hub tags and winds the live shot table. Operator *
 
 **Xbox 0:** left stick drive, right stick turn, LB seed heading, RB hub aim+windup, Y pass, A brake, B full speed, RT 1/5 speed, LT snap wheels 0.5 s, POV up 75 in preset.
 
-**X3D 1:** 1 feed, 2 intake, 3 fuel assist (flag default off), 4 retract, 5 autoshoot-feed (flag default off), 6 deploy, 7 closer windup, 8 pass windup, 9 close, 10 snap wheels, 11 test hood, 12 retract oscillate, hat down reverse, hat left exposure (disabled only).
+**X3D 1:** 1 feed, 2 intake, 4 retract, 6 deploy, 7 closer windup, 8 pass windup, 9 close, 10 snap wheels, 11 test hood, 12 retract oscillate, hat down reverse, hat left exposure. Buttons **3 and 5 unused**.
 
 ## Voltage rules
 
-Keep 35 A drive, 3000 idle between shots, open-loop teleop. Do not spool from 0 on a high-accel path. Optional features are NT kill-switches under `FeatureFlags`.
+Keep 35 A drive, 3000 idle between shots, open-loop teleop. Do not spool from 0 on a high-accel path. FeatureFlags are compiled defaults (Dashboard cannot change a match).
 
 ## Limelight
 
-Name `limelight`. Pipeline 0 = 2026 AprilTags / MegaTag2 (XY-only fusion, MegaTag1 disabled seed). Pipeline 1 = official Fuel B1 detector. Crop **this** hopper so onboard balls are not targets. Fiducial offset **-0.5842 m** stays until a range day.
+Name `limelight`. Pipeline **0 only** = 2026 AprilTags / MegaTag2 (XY-only fusion, MegaTag1 disabled seed). No Fuel neural pipeline in code. Fiducial offset **-0.5842 m** stays until a range day. RB uses the hood table + drivetrain yaw (`-tx * 0.15`).
 
 ## Build / sim (this PC)
 

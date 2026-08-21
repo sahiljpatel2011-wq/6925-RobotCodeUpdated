@@ -37,7 +37,7 @@ All names are registered with `Commands.defer` so each schedule gets a fresh com
 
 ## Hood
 
-| `hoodReset` | `hoodReset` | Default hood 0.50 (not 0). |
+| `hoodReset` | `hoodReset` | Hood **0** (clamped to servo min 0.01). |
 
 ## New autos
 
