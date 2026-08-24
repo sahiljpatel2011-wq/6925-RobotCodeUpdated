@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "python .cursor/hooks/block-origin-push.py",
+        "matcher": "git\\s+push",
+        "failClosed": true
+      }
+    ]
+  }
+}

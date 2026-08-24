@@ -1,0 +1,15 @@
+---
+description: FRC 6925 hard constraints — remotes, numbers, bindings, vision
+alwaysApply: true
+---
+
+# 6925 working copy
+
+Follow `.cursor/skills/frc-6925-robot/SKILL.md` before editing robot code.
+
+- Push **only** `personal` (`sahiljpatel2011-wq/6925-RobotCodeUpdated`). Never `git push origin` (`JonathanV0/6925-Rebuilt`).
+- Do not retune live RPM/hood, kAimP 0.15, idle 3000, 35 A, fiducial −0.5842 m, camera 26°/25.39/−1.46, hood direction, or Xbox/X3D bindings.
+- RB = aim+windup only. Operator button 1 feeds. Buttons 3 and 5 unused.
+- Do not rewrite Limelight crop/IMU/stream/tag-filters. Named commands via `NamedCommandRegistry` + `Commands.defer`.
+- After Java edits: `python .cursor/skills/frc-6925-robot/scripts/check_invariants.py` then `.\gradlew test`.
+- Not OneDrive. JDK `C:\Users\Public\wpilib\2025\jdk`. Leave `simgui-ds.json` untracked.
